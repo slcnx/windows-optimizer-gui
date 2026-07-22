@@ -101,38 +101,62 @@ $grpLimit.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9.5, [Syst
 [void]$tabProc.Controls.Add($grpLimit)
 
 $lblProcName = New-Object System.Windows.Forms.Label
-$lblProcName.Location = New-Object System.Drawing.Point(15, 30)
-$lblProcName.Size = New-Object System.Drawing.Size(65, 24)
+$lblProcName.Location = New-Object System.Drawing.Point(10, 30)
+$lblProcName.Size = New-Object System.Drawing.Size(55, 24)
 $lblProcName.Text = "进程名:"
 $lblProcName.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 [void]$grpLimit.Controls.Add($lblProcName)
 
 $txtProcName = New-Object System.Windows.Forms.TextBox
-$txtProcName.Location = New-Object System.Drawing.Point(80, 28)
-$txtProcName.Size = New-Object System.Drawing.Size(140, 24)
+$txtProcName.Location = New-Object System.Drawing.Point(65, 28)
+$txtProcName.Size = New-Object System.Drawing.Size(115, 24)
 $txtProcName.Font = New-Object System.Drawing.Font("Consolas", 9.5)
 [void]$grpLimit.Controls.Add($txtProcName)
 
 $lblCores = New-Object System.Windows.Forms.Label
-$lblCores.Location = New-Object System.Drawing.Point(235, 30)
-$lblCores.Size = New-Object System.Drawing.Size(75, 24)
+$lblCores.Location = New-Object System.Drawing.Point(185, 30)
+$lblCores.Size = New-Object System.Drawing.Size(65, 24)
 $lblCores.Text = "限制核心:"
 $lblCores.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 [void]$grpLimit.Controls.Add($lblCores)
 
 $numCores = New-Object System.Windows.Forms.NumericUpDown
-$numCores.Location = New-Object System.Drawing.Point(310, 28)
-$numCores.Size = New-Object System.Drawing.Size(60, 24)
+$numCores.Location = New-Object System.Drawing.Point(250, 28)
+$numCores.Size = New-Object System.Drawing.Size(45, 24)
 $numCores.Minimum = 1
 $numCores.Maximum = 64
 $numCores.Value = 2
 $numCores.Font = New-Object System.Drawing.Font("Consolas", 9.5)
 [void]$grpLimit.Controls.Add($numCores)
 
+$lblPrio = New-Object System.Windows.Forms.Label
+$lblPrio.Location = New-Object System.Drawing.Point(300, 30)
+$lblPrio.Size = New-Object System.Drawing.Size(80, 24)
+$lblPrio.Text = "设置优先级:"
+$lblPrio.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+[void]$grpLimit.Controls.Add($lblPrio)
+
+$cmbPrio = New-Object System.Windows.Forms.ComboBox
+$cmbPrio.Location = New-Object System.Drawing.Point(380, 28)
+$cmbPrio.Size = New-Object System.Drawing.Size(155, 24)
+$cmbPrio.DropDownStyle = "DropDownList"
+$cmbPrio.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+[void]$cmbPrio.Items.AddRange(@(
+    "不修改(保持原状)",
+    "实时/极高 (RealTime)",
+    "高优先级 (High)",
+    "高于标准 (AboveNormal)",
+    "标准/普通 (Normal)",
+    "低于标准 (BelowNormal)",
+    "低/空闲 (Idle)"
+))
+$cmbPrio.SelectedIndex = 0
+[void]$grpLimit.Controls.Add($cmbPrio)
+
 $btnLimit = New-Object System.Windows.Forms.Button
-$btnLimit.Location = New-Object System.Drawing.Point(385, 26)
-$btnLimit.Size = New-Object System.Drawing.Size(165, 30)
-$btnLimit.Text = "🔒 锁定限制当前进程"
+$btnLimit.Location = New-Object System.Drawing.Point(540, 26)
+$btnLimit.Size = New-Object System.Drawing.Size(135, 30)
+$btnLimit.Text = "🔒 锁定限制设置"
 $btnLimit.BackColor = [System.Drawing.Color]::FromArgb(41, 128, 185)
 $btnLimit.ForeColor = [System.Drawing.Color]::White
 $btnLimit.FlatStyle = "Flat"
@@ -140,9 +164,9 @@ $btnLimit.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9, [System
 [void]$grpLimit.Controls.Add($btnLimit)
 
 $chkAutoLock = New-Object System.Windows.Forms.CheckBox
-$chkAutoLock.Location = New-Object System.Drawing.Point(80, 62)
-$chkAutoLock.Size = New-Object System.Drawing.Size(470, 24)
-$chkAutoLock.Text = "刷新列表时，自动对已锁定进程的新衍生 PID 持续跟踪并限核"
+$chkAutoLock.Location = New-Object System.Drawing.Point(65, 62)
+$chkAutoLock.Size = New-Object System.Drawing.Size(550, 24)
+$chkAutoLock.Text = "刷新列表时，后台自动对已锁定进程的新衍生 PID 持续跟踪并强制应用限制"
 $chkAutoLock.Checked = $true
 $chkAutoLock.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 8.5)
 [void]$grpLimit.Controls.Add($chkAutoLock)
@@ -175,9 +199,33 @@ $dgvProc.BorderStyle = "Fixed3D"
 $dgvProc.Font = New-Object System.Drawing.Font("Consolas", 9)
 [void]$tabProc.Controls.Add($dgvProc)
 
+function Format-PriorityCN {
+    param ($prioEnum)
+    if ($null -eq $prioEnum) { return "未知/受保护" }
+    $pStr = $prioEnum.ToString()
+    $res = switch ($pStr) {
+        "RealTime"    { "实时 (极高)" }
+        "High"        { "高" }
+        "AboveNormal" { "高于标准" }
+        "Normal"      { "标准 (普通)" }
+        "BelowNormal" { "低于标准" }
+        "Idle"        { "低 (空闲)" }
+        default       { $pStr }
+    }
+    return $res
+}
+
 $dgvProc.add_CellClick({
     if ($dgvProc.SelectedRows.Count -gt 0) {
         $txtProcName.Text = $dgvProc.SelectedRows[0].Cells[0].Value
+        $cellPrio = $dgvProc.SelectedRows[0].Cells[3].Value
+        if ($cellPrio -match "实时") { $cmbPrio.SelectedIndex = 1 }
+        elseif ($cellPrio -match "^高$") { $cmbPrio.SelectedIndex = 2 }
+        elseif ($cellPrio -match "高于标准") { $cmbPrio.SelectedIndex = 3 }
+        elseif ($cellPrio -match "标准") { $cmbPrio.SelectedIndex = 4 }
+        elseif ($cellPrio -match "低于标准") { $cmbPrio.SelectedIndex = 5 }
+        elseif ($cellPrio -match "低") { $cmbPrio.SelectedIndex = 6 }
+        else { $cmbPrio.SelectedIndex = 0 }
     }
 })
 
@@ -195,27 +243,45 @@ $btnLimit.Add_Click({
     }
     $cores = [int]$numCores.Value
     $mask = (1 -shl $cores) - 1
+    
+    $selectedPrioText = $cmbPrio.SelectedItem.ToString()
+    $targetPrioClass = switch -Regex ($selectedPrioText) {
+        "RealTime"    { [System.Diagnostics.ProcessPriorityClass]::RealTime }
+        "High"        { [System.Diagnostics.ProcessPriorityClass]::High }
+        "AboveNormal" { [System.Diagnostics.ProcessPriorityClass]::AboveNormal }
+        "Normal"      { [System.Diagnostics.ProcessPriorityClass]::Normal }
+        "BelowNormal" { [System.Diagnostics.ProcessPriorityClass]::BelowNormal }
+        "Idle"        { [System.Diagnostics.ProcessPriorityClass]::Idle }
+        default       { $null }
+    }
+    
     $success = 0
     
-    # 记录到记忆字典
-    $script:lockedProcesses[$pName] = $cores
+    # 记录到记忆字典（改成保存对象：记录核心数与目标优先级）
+    $script:lockedProcesses[$pName] = @{
+        Cores = $cores
+        Priority = $targetPrioClass
+    }
 
     foreach ($p in $procs) {
         try {
-            $oldPriority = $p.PriorityClass
-            $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Idle
+            $oldPriority = Format-PriorityCN $p.PriorityClass
+            if ($targetPrioClass) {
+                $p.PriorityClass = $targetPrioClass
+            }
             $p.ProcessorAffinity = [IntPtr]$mask
             $success++
-            Write-Log "[限制✅] PID=$($p.Id) [$pName] 优先级: $oldPriority → Idle CPU: 限定 $cores 核 (亲和性掩码=0x$('{0:X}' -f $mask))" "#27ae60"
+            $newPriority = Format-PriorityCN $p.PriorityClass
+            Write-Log "[限制✅] PID=$($p.Id) [$pName] 优先级: $oldPriority → $newPriority | CPU亲和性: 限定 $cores 核 (掩码=0x$('{0:X}' -f $mask))" "#27ae60"
         } catch {
             Write-Log "[限制❌] PID=$($p.Id) [$pName] 失败: $($_.Exception.Message)" "#e74c3c"
         }
     }
-    Write-Log "[限制] 共处理 $($procs.Count) 个 [$pName] 进程，成功 $success 个。一键刷新即可看到最新已绑定核心数！" "#2c3e50"
+    Write-Log "[限制] 共处理 $($procs.Count) 个 [$pName] 进程，成功 $success 个！" "#2c3e50"
     & $refreshProcAction
 })
 
-# 刷新进程列表逻辑 (带当前核心和优先级读取)
+# 刷新进程列表逻辑 (带当前核心和优先级读取与全中文反显)
 $refreshProcAction = {
     $btnRefreshProc.Text = "刷新中..."
     $form.Refresh()
@@ -237,19 +303,30 @@ $refreshProcAction = {
         
         # 尝试读取或自动跟踪锁定
         if ($chkAutoLock.Checked -and $script:lockedProcesses.ContainsKey($p.ProcessName)) {
-            $targetCores = $script:lockedProcesses[$p.ProcessName]
+            $lockObj = $script:lockedProcesses[$p.ProcessName]
+            # 兼容旧格式与新格式
+            $targetCores = if ($lockObj -is [hashtable]) { $lockObj.Cores } else { [int]$lockObj }
+            $targetPrio = if ($lockObj -is [hashtable]) { $lockObj.Priority } else { $null }
             $targetMask = (1 -shl $targetCores) - 1
             try {
-                if ($p.ProcessorAffinity -ne [IntPtr]$targetMask -or $p.PriorityClass -ne [System.Diagnostics.ProcessPriorityClass]::Idle) {
-                    $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Idle
+                $needUpdate = $false
+                if ($p.ProcessorAffinity -ne [IntPtr]$targetMask) {
                     $p.ProcessorAffinity = [IntPtr]$targetMask
-                    Write-Log "[自动追踪✅] 对新发现/变动 PID=$($p.Id) [$($p.ProcessName)] 自动重绑至 $targetCores 核" "#2980b9"
+                    $needUpdate = $true
+                }
+                if ($targetPrio -and $p.PriorityClass -ne $targetPrio) {
+                    $p.PriorityClass = $targetPrio
+                    $needUpdate = $true
+                }
+                if ($needUpdate) {
+                    $prioStrCN = Format-PriorityCN $p.PriorityClass
+                    Write-Log "[自动追踪✅] 对新衍生/变动 PID=$($p.Id) [$($p.ProcessName)] 自动重绑至 $targetCores 核 | 优先级: $prioStrCN" "#2980b9"
                 }
             } catch {}
         }
 
         # 读取当前的优先级与分配的核心数 (Affinity)
-        $prioStr = try { $p.PriorityClass.ToString() } catch { "未知/受保护" }
+        $prioStr = try { Format-PriorityCN $p.PriorityClass } catch { "未知/受保护" }
         $affStr = try {
             $aff = [int64]$p.ProcessorAffinity
             $count = 0
@@ -265,14 +342,19 @@ $refreshProcAction = {
     }
     $dgvProc.DataSource = $table
     
-    # 高亮内存 > 500MB 行，且针对已被限为 Idle 的行给绿色文字
+    # 高亮内存 > 500MB 行，并针对中文优先级赋予不同颜色警示
     foreach ($row in $dgvProc.Rows) {
         $memVal = 0
         if ([double]::TryParse($row.Cells[1].Value, [ref]$memVal) -and $memVal -gt 500) {
             $row.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 235, 235)
         }
-        if ($row.Cells[3].Value -eq "Idle") {
+        $pCellVal = $row.Cells[3].Value
+        if ($pCellVal -match "低 \(空闲\)|低于标准") {
             $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+            $row.Cells[3].Style.Font = New-Object System.Drawing.Font("Consolas", 9, [System.Drawing.FontStyle]::Bold)
+        }
+        elseif ($pCellVal -match "实时|^高$|高于标准") {
+            $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
             $row.Cells[3].Style.Font = New-Object System.Drawing.Font("Consolas", 9, [System.Drawing.FontStyle]::Bold)
         }
     }
