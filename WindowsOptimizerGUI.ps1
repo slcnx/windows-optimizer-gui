@@ -168,27 +168,39 @@ $form.add_Resize({
     }
 })
 
+$script:isClosingPromptOpen = $false
+
 $form.add_FormClosing({
     param($sender, $e)
-    if (-not $script:isExplicitExit -and $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
-        $res = [System.Windows.Forms.MessageBox]::Show(
-            "您点击了右上角关闭按钮 [ X ]。`n`n选择【是 (Yes)】：最小化至右下角系统托盘，继续在后台帮您自动追锁核心与优先级；`n选择【否 (No)】：彻底退出程序并停止所有后台优化监控。`n`n是否将程序保留在后台托盘继续运行？",
-            "提示：关闭选择 — 高阶性能优化器",
-            [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
-            [System.Windows.Forms.MessageBoxIcon]::Question,
-            [System.Windows.Forms.MessageBoxDefaultButton]::Button1
-        )
-        if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
-            $e.Cancel = $true
-            $form.Hide()
-            $notifyIcon.Visible = $true
-            $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器后台守护中", "已为您最小化至系统托盘。左键单击图标或右键弹出菜单即可唤回主界面！", [System.Windows.Forms.ToolTipIcon]::Info)
-        } elseif ($res -eq [System.Windows.Forms.DialogResult]::No) {
-            $script:isExplicitExit = $true
-            $notifyIcon.Visible = $false
-            $notifyIcon.Dispose()
-        } else {
-            $e.Cancel = $true
+    if ($script:isExplicitExit) { return }
+    if ($script:isClosingPromptOpen) {
+        $e.Cancel = $true
+        return
+    }
+    if ($e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
+        $script:isClosingPromptOpen = $true
+        try {
+            $res = [System.Windows.Forms.MessageBox]::Show(
+                "您点击了右上角关闭按钮 [ X ]。`n`n选择【是 (Yes)】：最小化至右下角系统托盘，继续在后台帮您自动追锁核心与优先级；`n选择【否 (No)】：彻底退出程序并停止所有后台优化监控。`n`n是否将程序保留在后台托盘继续运行？",
+                "提示：关闭选择 — 高阶性能优化器",
+                [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+                [System.Windows.Forms.MessageBoxIcon]::Question,
+                [System.Windows.Forms.MessageBoxDefaultButton]::Button1
+            )
+            if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $e.Cancel = $true
+                $form.Hide()
+                $notifyIcon.Visible = $true
+                $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器后台守护中", "已为您最小化至系统托盘。左键单击图标或右键弹出菜单即可唤回主界面！", [System.Windows.Forms.ToolTipIcon]::Info)
+            } elseif ($res -eq [System.Windows.Forms.DialogResult]::No) {
+                $script:isExplicitExit = $true
+                $notifyIcon.Visible = $false
+                $notifyIcon.Dispose()
+            } else {
+                $e.Cancel = $true
+            }
+        } finally {
+            $script:isClosingPromptOpen = $false
         }
     }
 })
@@ -733,7 +745,7 @@ $bgDaemonTimer.add_Tick({
 })
 $bgDaemonTimer.Start()
 
-[void]$form.ShowDialog()
+[void][System.Windows.Forms.Application]::Run($form)
 $bgDaemonTimer.Stop()
 $bgDaemonTimer.Dispose()
 $notifyIcon.Dispose()
