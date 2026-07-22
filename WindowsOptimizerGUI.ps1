@@ -85,6 +85,7 @@ $menuExit.add_Click({
 })
 
 $notifyIcon.ContextMenuStrip = $trayMenu
+$form.ContextMenuStrip = $trayMenu
 
 $notifyIcon.add_MouseClick({
     param($sender, $e)
@@ -101,11 +102,16 @@ $notifyIcon.add_DoubleClick({
     $form.Activate()
 })
 
+$notifyIcon.add_BalloonTipClicked({
+    $form.Show()
+    $form.WindowState = 'Normal'
+    $form.Activate()
+})
+
 $form.add_Resize({
     if ($form.WindowState -eq 'Minimized') {
-        $form.Hide()
         $notifyIcon.Visible = $true
-        $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器", "程序已后台最小化至系统托盘`n单击图标或右键菜单即可随时打开主面板！", [System.Windows.Forms.ToolTipIcon]::Info)
+        $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器后台监控中", "已最小化。任务栏图标保持保留，同时右下角系统托盘可右键呼出菜单或左键唤回界面！", [System.Windows.Forms.ToolTipIcon]::Info)
     }
 })
 
