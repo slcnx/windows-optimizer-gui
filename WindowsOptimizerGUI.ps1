@@ -244,15 +244,14 @@ $btnLimit.Add_Click({
     $cores = [int]$numCores.Value
     $mask = (1 -shl $cores) - 1
     
-    $selectedPrioText = $cmbPrio.SelectedItem.ToString()
-    $targetPrioClass = switch -Regex ($selectedPrioText) {
-        "RealTime"    { [System.Diagnostics.ProcessPriorityClass]::RealTime }
-        "High"        { [System.Diagnostics.ProcessPriorityClass]::High }
-        "AboveNormal" { [System.Diagnostics.ProcessPriorityClass]::AboveNormal }
-        "Normal"      { [System.Diagnostics.ProcessPriorityClass]::Normal }
-        "BelowNormal" { [System.Diagnostics.ProcessPriorityClass]::BelowNormal }
-        "Idle"        { [System.Diagnostics.ProcessPriorityClass]::Idle }
-        default       { $null }
+    $targetPrioClass = switch ($cmbPrio.SelectedIndex) {
+        1 { [System.Diagnostics.ProcessPriorityClass]::RealTime }
+        2 { [System.Diagnostics.ProcessPriorityClass]::High }
+        3 { [System.Diagnostics.ProcessPriorityClass]::AboveNormal }
+        4 { [System.Diagnostics.ProcessPriorityClass]::Normal }
+        5 { [System.Diagnostics.ProcessPriorityClass]::BelowNormal }
+        6 { [System.Diagnostics.ProcessPriorityClass]::Idle }
+        default { $null }
     }
     
     $success = 0
