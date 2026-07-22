@@ -35,6 +35,50 @@ function Write-Log {
     }
 }
 
+function Format-PriorityCN {
+    param ($prioEnum)
+    if ($null -eq $prioEnum) { return "未知/受保护" }
+    $pStr = $prioEnum.ToString()
+    $res = switch ($pStr) {
+        "RealTime"    { "实时 (极高)" }
+        "High"        { "高" }
+        "AboveNormal" { "高于标准" }
+        "Normal"      { "标准 (普通)" }
+        "BelowNormal" { "低于标准" }
+        "Idle"        { "低 (空闲)" }
+        default       { $pStr }
+    }
+    return $res
+}
+
+function Invoke-BackgroundAutoLock {
+    if (-not $chkAutoLock -or -not $chkAutoLock.Checked -or $script:lockedProcesses.Count -eq 0) { return }
+    foreach ($procName in @($script:lockedProcesses.Keys)) {
+        $lockObj = $script:lockedProcesses[$procName]
+        $targetCores = if ($lockObj -is [hashtable]) { $lockObj.Cores } else { [int]$lockObj }
+        $targetPrio = if ($lockObj -is [hashtable]) { $lockObj.Priority } else { $null }
+        $targetMask = (1 -shl $targetCores) - 1
+        $runningProcs = Get-Process -Name $procName -ErrorAction SilentlyContinue
+        foreach ($p in $runningProcs) {
+            try {
+                $needUpdate = $false
+                if ($p.ProcessorAffinity -ne [IntPtr]$targetMask) {
+                    $p.ProcessorAffinity = [IntPtr]$targetMask
+                    $needUpdate = $true
+                }
+                if ($targetPrio -and $p.PriorityClass -ne $targetPrio) {
+                    $p.PriorityClass = $targetPrio
+                    $needUpdate = $true
+                }
+                if ($needUpdate) {
+                    $prioStrCN = try { Format-PriorityCN $p.PriorityClass } catch { "未知" }
+                    Write-Log "[后台自动守护⚡] 自动拦截变动/新衍生 PID=$($p.Id) [$($p.ProcessName)] 强锁 $targetCores 核 | 优先级: $prioStrCN" "#e67e22"
+                }
+            } catch {}
+        }
+    }
+}
+
 # ===== 主窗体 =====
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Windows 高阶性能优化器 — 精细控制与靶向绑核"
@@ -74,8 +118,10 @@ $menuShow.add_Click({
 
 $menuQuickCheck = $trayMenu.Items.Add("⚡ 立即触发一次后台限制追锁")
 $menuQuickCheck.add_Click({
-    if ($chkAutoLock.Checked) {
-        Write-Log "[右键菜单] 手动触发了后台自动跟踪限制检测" "#2980b9"
+    Write-Log "[托盘快控⚡] 手动触发对所有已绑定进程的后台扫描与强制限制..." "#2980b9"
+    Invoke-BackgroundAutoLock
+    if ($form.Visible -and $form.WindowState -ne 'Minimized') {
+        & $refreshProcAction
     }
 })
 
@@ -251,7 +297,7 @@ $btnLimit.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9, [System
 $chkAutoLock = New-Object System.Windows.Forms.CheckBox
 $chkAutoLock.Location = New-Object System.Drawing.Point(65, 62)
 $chkAutoLock.Size = New-Object System.Drawing.Size(550, 24)
-$chkAutoLock.Text = "刷新列表时，后台自动对已锁定进程的新衍生 PID 持续跟踪并强制应用限制"
+$chkAutoLock.Text = "⚡ 开启后台连续智能守护 (每3秒自动巡检，后台或最小化至托盘均生效，对变动 PID 强锁)"
 $chkAutoLock.Checked = $true
 $chkAutoLock.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 8.5)
 [void]$grpLimit.Controls.Add($chkAutoLock)
@@ -283,22 +329,6 @@ $dgvProc.BackgroundColor = [System.Drawing.Color]::White
 $dgvProc.BorderStyle = "Fixed3D"
 $dgvProc.Font = New-Object System.Drawing.Font("Consolas", 9)
 [void]$tabProc.Controls.Add($dgvProc)
-
-function Format-PriorityCN {
-    param ($prioEnum)
-    if ($null -eq $prioEnum) { return "未知/受保护" }
-    $pStr = $prioEnum.ToString()
-    $res = switch ($pStr) {
-        "RealTime"    { "实时 (极高)" }
-        "High"        { "高" }
-        "AboveNormal" { "高于标准" }
-        "Normal"      { "标准 (普通)" }
-        "BelowNormal" { "低于标准" }
-        "Idle"        { "低 (空闲)" }
-        default       { $pStr }
-    }
-    return $res
-}
 
 $dgvProc.add_CellClick({
     if ($dgvProc.SelectedRows.Count -gt 0) {
@@ -693,7 +723,17 @@ $form.add_Load({
     & $refreshSvcAction
     Write-Log "高阶性能优化器精细控制版已启动，以管理员权限运行 ✅" "#27ae60"
     Write-Log "提示：在标签页之间切换，可分别进行【进程绑核监控】与【系统服务单项开关控制】" "#2980b9"
+    Write-Log "⚡ 后台智能连续守护已启动：每 3 秒自动巡检，无论是窗口展示还是点击 X 最小化至托盘后台，均实时自动重绑 PID 亲和性与优先级！" "#e67e22"
 })
 
+$bgDaemonTimer = New-Object System.Windows.Forms.Timer
+$bgDaemonTimer.Interval = 3000
+$bgDaemonTimer.add_Tick({
+    Invoke-BackgroundAutoLock
+})
+$bgDaemonTimer.Start()
+
 [void]$form.ShowDialog()
+$bgDaemonTimer.Stop()
+$bgDaemonTimer.Dispose()
 $notifyIcon.Dispose()
