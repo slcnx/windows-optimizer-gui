@@ -49,7 +49,11 @@ $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 # ===== 托盘与窗体图标 =====
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $appIcon = try {
-    [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+    if ([System.IO.File]::Exists("C:\Users\EDY\WindowsOptimizer.ico")) {
+        New-Object System.Drawing.Icon("C:\Users\EDY\WindowsOptimizer.ico")
+    } else {
+        [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+    }
 } catch {
     [System.Drawing.Icon]::ExtractAssociatedIcon("$pshome\powershell.exe")
 }
