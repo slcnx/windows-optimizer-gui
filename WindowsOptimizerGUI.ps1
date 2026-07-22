@@ -46,21 +46,68 @@ $form.TopMost = $true
 $form.ShowInTaskbar = $true
 $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 
-# ===== 托盘 =====
+# ===== 托盘与窗体图标 =====
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon("$pshome\powershell.exe")
-$notifyIcon.Text = "高阶性能优化器 (运行中)"
-$notifyIcon.Visible = $false
-$contextMenu = New-Object System.Windows.Forms.ContextMenu
-$menuShow = New-Object System.Windows.Forms.MenuItem("显示主面板")
-$menuShow.add_Click({ $form.Show(); $form.WindowState = 'Normal'; $notifyIcon.Visible = $false })
-$menuExit = New-Object System.Windows.Forms.MenuItem("彻底退出")
-$menuExit.add_Click({ $notifyIcon.Visible = $false; $form.Close() })
-[void]$contextMenu.MenuItems.Add($menuShow)
-[void]$contextMenu.MenuItems.Add($menuExit)
-$notifyIcon.ContextMenu = $contextMenu
-$notifyIcon.add_DoubleClick({ $form.Show(); $form.WindowState = 'Normal'; $notifyIcon.Visible = $false })
-$form.add_Resize({ if ($form.WindowState -eq 'Minimized') { $form.Hide(); $notifyIcon.Visible = $true } })
+$appIcon = try {
+    [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+} catch {
+    [System.Drawing.Icon]::ExtractAssociatedIcon("$pshome\powershell.exe")
+}
+$form.Icon = $appIcon
+$notifyIcon.Icon = $appIcon
+$notifyIcon.Text = "高阶性能优化器 (后台监控运行中)"
+$notifyIcon.Visible = $true
+
+$trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
+$trayMenu.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+
+$menuShow = $trayMenu.Items.Add("🖥️ 显示主界面 / 恢复窗口")
+$menuShow.add_Click({
+    $form.Show()
+    $form.WindowState = 'Normal'
+    $form.Activate()
+})
+
+$menuQuickCheck = $trayMenu.Items.Add("⚡ 立即触发一次后台限制追锁")
+$menuQuickCheck.add_Click({
+    if ($chkAutoLock.Checked) {
+        Write-Log "[右键菜单] 手动触发了后台自动跟踪限制检测" "#2980b9"
+    }
+})
+
+[void]$trayMenu.Items.Add("-")
+
+$menuExit = $trayMenu.Items.Add("❌ 彻底退出程序")
+$menuExit.add_Click({
+    $notifyIcon.Visible = $false
+    $notifyIcon.Dispose()
+    $form.Close()
+})
+
+$notifyIcon.ContextMenuStrip = $trayMenu
+
+$notifyIcon.add_MouseClick({
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        $form.Show()
+        $form.WindowState = 'Normal'
+        $form.Activate()
+    }
+})
+
+$notifyIcon.add_DoubleClick({
+    $form.Show()
+    $form.WindowState = 'Normal'
+    $form.Activate()
+})
+
+$form.add_Resize({
+    if ($form.WindowState -eq 'Minimized') {
+        $form.Hide()
+        $notifyIcon.Visible = $true
+        $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器", "程序已后台最小化至系统托盘`n单击图标或右键菜单即可随时打开主面板！", [System.Windows.Forms.ToolTipIcon]::Info)
+    }
+})
 
 # ===== 主布局容器 =====
 $mainContainer = New-Object System.Windows.Forms.Panel
