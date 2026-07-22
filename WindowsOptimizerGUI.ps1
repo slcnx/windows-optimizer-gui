@@ -77,8 +77,11 @@ $menuQuickCheck.add_Click({
 
 [void]$trayMenu.Items.Add("-")
 
+$script:isExplicitExit = $false
+
 $menuExit = $trayMenu.Items.Add("❌ 彻底退出程序")
 $menuExit.add_Click({
+    $script:isExplicitExit = $true
     $notifyIcon.Visible = $false
     $notifyIcon.Dispose()
     $form.Close()
@@ -112,6 +115,31 @@ $form.add_Resize({
     if ($form.WindowState -eq 'Minimized') {
         $notifyIcon.Visible = $true
         $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器后台监控中", "已最小化。任务栏图标保持保留，同时右下角系统托盘可右键呼出菜单或左键唤回界面！", [System.Windows.Forms.ToolTipIcon]::Info)
+    }
+})
+
+$form.add_FormClosing({
+    param($sender, $e)
+    if (-not $script:isExplicitExit -and $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
+        $res = [System.Windows.Forms.MessageBox]::Show(
+            "您点击了右上角关闭按钮 [ X ]。`n`n选择【是 (Yes)】：最小化至右下角系统托盘，继续在后台帮您自动追锁核心与优先级；`n选择【否 (No)】：彻底退出程序并停止所有后台优化监控。`n`n是否将程序保留在后台托盘继续运行？",
+            "提示：关闭选择 — 高阶性能优化器",
+            [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+            [System.Windows.Forms.MessageBoxIcon]::Question,
+            [System.Windows.Forms.MessageBoxDefaultButton]::Button1
+        )
+        if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $e.Cancel = $true
+            $form.Hide()
+            $notifyIcon.Visible = $true
+            $notifyIcon.ShowBalloonTip(3000, "高阶性能优化器后台守护中", "已为您最小化至系统托盘。左键单击图标或右键弹出菜单即可唤回主界面！", [System.Windows.Forms.ToolTipIcon]::Info)
+        } elseif ($res -eq [System.Windows.Forms.DialogResult]::No) {
+            $script:isExplicitExit = $true
+            $notifyIcon.Visible = $false
+            $notifyIcon.Dispose()
+        } else {
+            $e.Cancel = $true
+        }
     }
 })
 
