@@ -1,0 +1,54 @@
+specification {
+  element person {
+    notation '用户'
+    style {
+      shape person
+      color green
+    }
+  }
+
+  element system {
+    notation '软件系统'
+    style {
+      opacity 15%
+    }
+  }
+
+  element component {
+    notation '应用组件'
+    style {
+      opacity 20%
+    }
+  }
+
+  element store {
+    notation '状态 / 数据'
+    style {
+      shape storage
+      color amber
+    }
+  }
+
+  element external {
+    notation 'Windows 外部能力'
+    style {
+      color muted
+      opacity 15%
+    }
+  }
+
+  relationship realtime {
+    line solid
+    color green
+  }
+
+  relationship control {
+    line solid
+    color red
+  }
+
+  relationship read {
+    line dashed
+    color muted
+  }
+}

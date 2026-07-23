@@ -73,3 +73,41 @@
 ## 📄 许可证 (License)
 
 开源且自由，欢迎提 Issue 与 PR 共同完善这款硬核精细化控制利器！
+
+---
+
+## 🗺️ 中文实时架构图（LikeC4）
+
+项目内置基于 [LikeC4](https://likec4.dev/) 的中文架构模型，包含系统全景、进程绑核、后台自动守护、系统服务/计划任务/磁盘策略控制四张视图。
+
+需要 Node.js 22.22.3 或更高版本。
+
+```powershell
+npm install
+npm run architecture
+```
+
+浏览器会打开本地架构站点。修改 `architecture/*.c4` 后，页面会实时热更新。
+
+其他命令：
+
+```powershell
+npm run architecture:check   # 校验架构模型
+npm run architecture:build   # 构建静态架构站点到 dist/architecture
+npm run architecture:export  # 导出 PNG 到 architecture/png
+```
+
+---
+
+## 🧹 离线内嵌 Win11Debloat（中文界面）
+
+项目已固定内嵌 [Win11Debloat](https://github.com/Raphire/Win11Debloat) `2026.07.11`，主界面新增“系统精简（离线内嵌）”标签页。常用的应用清理、隐私、AI、系统和资源管理器选项均以中文展示，执行过程不会在线下载脚本。
+
+源码调试时直接读取 `vendor/Win11Debloat`。构建发布版时，`Build-Release.ps1` 会把该目录压缩并注入单文件 EXE；用户首次运行功能时仅解压到本机 `%LOCALAPPDATA%\WindowsOptimizerGUI` 缓存。
+
+```powershell
+Install-Module ps2exe -Scope CurrentUser
+.\Build-Release.ps1
+```
+
+默认输出为 `release/WindowsOptimizerGUI.exe`。第三方版本、固定提交及 MIT 许可信息见 `THIRD_PARTY_NOTICES.md`。

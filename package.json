@@ -1,0 +1,19 @@
+{
+  "name": "windows-optimizer-gui-architecture",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Windows Optimizer GUI 的中文 LikeC4 实时架构图",
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.3"
+  },
+  "scripts": {
+    "architecture": "likec4 start",
+    "architecture:build": "likec4 build -o ./dist/architecture",
+    "architecture:check": "likec4 validate",
+    "architecture:export": "likec4 export png -o ./architecture/png"
+  },
+  "devDependencies": {
+    "likec4": "1.59.2"
+  }
+}

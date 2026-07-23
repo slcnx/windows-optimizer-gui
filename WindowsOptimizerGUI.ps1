@@ -18,6 +18,128 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 $logFile = "$env:USERPROFILE\optimizer_log.txt"
 $script:lockedProcesses = @{} # 记忆已绑核限速的进程，方便刷新时追踪
+$script:EmbeddedWin11DebloatZipBase64 = "" # BUILD_EMBED_MARKER
+$script:Win11DebloatProcess = $null
+$script:Win11DebloatTimer = $null
+$script:Win11DebloatVersion = "2026.07.11"
+$script:Win11DebloatLogFile = $null
+$script:Win11DebloatLogLineCount = 0
+$script:Win11DebloatRemovalCurrent = 0
+$script:Win11DebloatRemovalTotal = 0
+$script:Win11DebloatAppNames = @{}
+
+function Resolve-Win11DebloatScript {
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $sourceScript = Join-Path $PSScriptRoot "vendor\Win11Debloat\Win11Debloat.ps1"
+        if (Test-Path -LiteralPath $sourceScript) {
+            return $sourceScript
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($script:EmbeddedWin11DebloatZipBase64)) {
+        throw "未找到内嵌的 Win11Debloat 资源。请使用 Build-Release.ps1 重新构建发布版。"
+    }
+
+    $cacheRoot = Join-Path $env:LOCALAPPDATA "WindowsOptimizerGUI\Win11Debloat\$($script:Win11DebloatVersion)"
+    $cachedScript = Join-Path $cacheRoot "Win11Debloat.ps1"
+    if (Test-Path -LiteralPath $cachedScript) {
+        return $cachedScript
+    }
+
+    if (Test-Path -LiteralPath $cacheRoot) {
+        Remove-Item -LiteralPath $cacheRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    $zipPath = Join-Path $cacheRoot "payload.zip"
+    try {
+        [System.IO.File]::WriteAllBytes($zipPath, [Convert]::FromBase64String($script:EmbeddedWin11DebloatZipBase64))
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $cacheRoot)
+    } finally {
+        Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path -LiteralPath $cachedScript)) {
+        throw "Win11Debloat 内嵌资源解压失败。"
+    }
+    return $cachedScript
+}
+
+function Get-Win11DebloatAppCatalog {
+    $debloatScript = Resolve-Win11DebloatScript
+    $appsFile = Join-Path (Split-Path -Parent $debloatScript) "Config\Apps.json"
+    if (-not (Test-Path -LiteralPath $appsFile)) {
+        throw "找不到 Win11Debloat 应用清单：$appsFile"
+    }
+    return @((Get-Content -Raw -Encoding UTF8 -LiteralPath $appsFile | ConvertFrom-Json).Apps)
+}
+
+function Start-Win11Debloat {
+    param([string[]]$Arguments)
+
+    if ($script:Win11DebloatProcess -and -not $script:Win11DebloatProcess.HasExited) {
+        Write-Log "[系统精简] Win11Debloat 正在执行，请等待当前任务完成。" "#e67e22"
+        return
+    }
+
+    try {
+        $debloatScript = Resolve-Win11DebloatScript
+        $runLogDirectory = Join-Path $env:LOCALAPPDATA "WindowsOptimizerGUI\Logs"
+        New-Item -ItemType Directory -Path $runLogDirectory -Force | Out-Null
+        $script:Win11DebloatLogFile = Join-Path $runLogDirectory "Win11Debloat.log"
+        Remove-Item -LiteralPath $script:Win11DebloatLogFile -Force -ErrorAction SilentlyContinue
+        $script:Win11DebloatLogLineCount = 0
+        $script:Win11DebloatRemovalCurrent = 0
+        $script:Win11DebloatRemovalTotal = 0
+        $script:Win11DebloatAppNames = @{}
+
+        if (($Arguments -contains "-RemoveApps") -or ($Arguments -contains "-RemoveGamingApps")) {
+            $catalog = @(Get-Win11DebloatAppCatalog)
+            $selectedAppIds = New-Object System.Collections.Generic.HashSet[string]
+            foreach ($app in $catalog) {
+                foreach ($appId in @($app.AppId)) { $script:Win11DebloatAppNames[[string]$appId] = [string]$app.FriendlyName }
+                if (($Arguments -contains "-RemoveApps") -and $app.SelectedByDefault) {
+                    foreach ($appId in @($app.AppId)) { [void]$selectedAppIds.Add([string]$appId) }
+                }
+            }
+            if ($Arguments -contains "-RemoveGamingApps") {
+                $debloatRoot = Split-Path -Parent $debloatScript
+                $appsJson = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $debloatRoot "Config\Apps.json") | ConvertFrom-Json
+                $gamingPreset = $appsJson.Presets | Where-Object Name -eq "Xbox gaming apps" | Select-Object -First 1
+                foreach ($appId in @($gamingPreset.AppIds)) { [void]$selectedAppIds.Add([string]$appId) }
+            }
+            $script:Win11DebloatRemovalTotal = $selectedAppIds.Count
+        }
+
+        $argumentList = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", ('"{0}"' -f $debloatScript),
+            "-Silent",
+            "-NoRestartExplorer",
+            "-LogPath", ('"{0}"' -f $runLogDirectory)
+        ) + $Arguments
+
+        $script:Win11DebloatProcess = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -ArgumentList $argumentList -WindowStyle Hidden -PassThru
+        if ($script:Win11DebloatTimer) { $script:Win11DebloatTimer.Start() }
+        if ($progressDebloat) {
+            if ($script:Win11DebloatRemovalTotal -gt 0) {
+                $progressDebloat.Style = [System.Windows.Forms.ProgressBarStyle]::Continuous
+                $progressDebloat.Minimum = 0
+                $progressDebloat.Maximum = $script:Win11DebloatRemovalTotal
+                $progressDebloat.Value = 0
+                $lblDebloatProgress.Text = "准备卸载应用：0 / $($script:Win11DebloatRemovalTotal)"
+            } else {
+                $progressDebloat.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
+                $lblDebloatProgress.Text = "正在应用系统设置，请稍候……"
+            }
+        }
+        Write-Log "[系统精简] 已启动离线 Win11Debloat $($script:Win11DebloatVersion)：$($Arguments -join ' ')" "#2980b9"
+    } catch {
+        Write-Log "[系统精简❌] 启动失败：$($_.Exception.Message)" "#e74c3c"
+    }
+}
 
 function Write-Log {
     param([string]$msg, [string]$color = "#000000")
@@ -230,6 +352,13 @@ $tabSvc.Text = "⚙️ 系统服务与任务精细控制 (单项开关)"
 $tabSvc.Padding = New-Object System.Windows.Forms.Padding(10)
 $tabSvc.BackColor = [System.Drawing.Color]::FromArgb(248, 249, 250)
 [void]$tabControl.TabPages.Add($tabSvc)
+
+# --- 标签页 3: 内嵌 Win11Debloat 中文前端 ---
+$tabDebloat = New-Object System.Windows.Forms.TabPage
+$tabDebloat.Text = "🧹 系统精简（离线内嵌）"
+$tabDebloat.Padding = New-Object System.Windows.Forms.Padding(10)
+$tabDebloat.BackColor = [System.Drawing.Color]::FromArgb(248, 249, 250)
+[void]$tabControl.TabPages.Add($tabDebloat)
 
 # =========================================================================
 #                       TAB 1: 进程监控与核心绑定
@@ -696,6 +825,296 @@ $btnEnableSelected.Add_Click({
 })
 
 # =========================================================================
+#                       TAB 3: Win11Debloat 中文前端
+# =========================================================================
+
+$lblDebloatTitle = New-Object System.Windows.Forms.Label
+$lblDebloatTitle.Location = New-Object System.Drawing.Point(10, 10)
+$lblDebloatTitle.Size = New-Object System.Drawing.Size(680, 42)
+$lblDebloatTitle.Text = "Win11Debloat $($script:Win11DebloatVersion) 已完整内嵌，运行时不联网下载。`r`n勾选后执行；涉及系统设置与应用卸载，建议先创建还原点。"
+$lblDebloatTitle.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9, [System.Drawing.FontStyle]::Bold)
+[void]$tabDebloat.Controls.Add($lblDebloatTitle)
+
+$script:DebloatOptions = @(
+    [pscustomobject]@{ Category = "应用清理"; Label = "卸载微软预装与推广应用（保留商店等关键组件）"; Argument = "-RemoveApps"; Selected = $false },
+    [pscustomobject]@{ Category = "应用清理"; Label = "卸载 Xbox 游戏类预装应用"; Argument = "-RemoveGamingApps"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭遥测、诊断数据、活动历史与广告跟踪"; Argument = "-DisableTelemetry"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭 Windows 搜索历史"; Argument = "-DisableSearchHistory"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭开始菜单/搜索中的 Bing 联网结果"; Argument = "-DisableBing"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭 Windows 提示、建议与推广内容"; Argument = "-DisableSuggestions"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭定位服务与应用定位权限"; Argument = "-DisableLocationServices"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭「查找我的设备」定位跟踪"; Argument = "-DisableFindMyDevice"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭 Edge 广告、建议与推广内容"; Argument = "-DisableEdgeAds"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "隐藏设置主页中的 Microsoft 365 广告"; Argument = "-DisableSettings365Ads"; Selected = $false },
+    [pscustomobject]@{ Category = "隐私与推广"; Label = "隐藏设置应用的主页"; Argument = "-DisableSettingsHome"; Selected = $false },
+    [pscustomobject]@{ Category = "AI 功能"; Label = "禁用并移除 Microsoft Copilot"; Argument = "-DisableCopilot"; Selected = $false },
+    [pscustomobject]@{ Category = "AI 功能"; Label = "禁用 Windows Recall（回顾）"; Argument = "-DisableRecall"; Selected = $false },
+    [pscustomobject]@{ Category = "AI 功能"; Label = "禁用 Click to Do（单击即办）"; Argument = "-DisableClickToDo"; Selected = $false },
+    [pscustomobject]@{ Category = "AI 功能"; Label = "禁止 Windows AI 服务自动启动"; Argument = "-DisableAISvcAutoStart"; Selected = $false },
+    [pscustomobject]@{ Category = "AI 功能"; Label = "关闭画图、记事本与 Edge 的 AI 功能"; Arguments = @("-DisablePaintAI", "-DisableNotepadAI", "-DisableEdgeAI"); Selected = $false },
+    [pscustomobject]@{ Category = "系统与更新"; Label = "关闭快速启动，确保每次完整关机"; Argument = "-DisableFastStartup"; Selected = $false },
+    [pscustomobject]@{ Category = "系统与更新"; Label = "关闭 BitLocker 自动设备加密"; Argument = "-DisableBitlockerAutoEncryption"; Selected = $false },
+    [pscustomobject]@{ Category = "系统与更新"; Label = "关闭存储感知自动清理"; Argument = "-DisableStorageSense"; Selected = $false },
+    [pscustomobject]@{ Category = "系统与更新"; Label = "阻止 Windows 更新后自动重启"; Argument = "-PreventUpdateAutoReboot"; Selected = $false },
+    [pscustomobject]@{ Category = "系统与更新"; Label = "关闭传递优化（局域网/互联网更新共享）"; Argument = "-DisableDeliveryOptimization"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "关闭鼠标加速（提高指针精确度）"; Argument = "-DisableMouseAcceleration"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "关闭粘滞键快捷键弹窗"; Argument = "-DisableStickyKeys"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "恢复 Windows 10 经典右键菜单"; Argument = "-RevertContextMenu"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "显示已知文件类型的扩展名"; Argument = "-ShowKnownFileExt"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "显示资源管理器中的隐藏文件夹"; Argument = "-ShowHiddenFolders"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "任务栏图标左对齐"; Argument = "-TaskbarAlignLeft"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "隐藏任务栏搜索入口"; Argument = "-HideSearchTb"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "隐藏任务视图按钮"; Argument = "-HideTaskview"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "隐藏开始菜单推荐区域"; Argument = "-DisableStartRecommended"; Selected = $false },
+    [pscustomobject]@{ Category = "交互与资源管理器"; Label = "禁用 Windows 小组件"; Argument = "-DisableWidgets"; Selected = $false }
+)
+
+$lblDebloatCategory = New-Object System.Windows.Forms.Label
+$lblDebloatCategory.Location = New-Object System.Drawing.Point(10, 61)
+$lblDebloatCategory.Size = New-Object System.Drawing.Size(66, 26)
+$lblDebloatCategory.Text = "功能分类:"
+[void]$tabDebloat.Controls.Add($lblDebloatCategory)
+
+$cmbDebloatCategory = New-Object System.Windows.Forms.ComboBox
+$cmbDebloatCategory.Location = New-Object System.Drawing.Point(78, 58)
+$cmbDebloatCategory.Size = New-Object System.Drawing.Size(165, 26)
+$cmbDebloatCategory.DropDownStyle = "DropDownList"
+[void]$cmbDebloatCategory.Items.AddRange(@("全部", "应用清理", "隐私与推广", "AI 功能", "系统与更新", "交互与资源管理器"))
+$cmbDebloatCategory.SelectedIndex = 0
+[void]$tabDebloat.Controls.Add($cmbDebloatCategory)
+
+$btnDebloatSelectCategory = New-Object System.Windows.Forms.Button
+$btnDebloatSelectCategory.Location = New-Object System.Drawing.Point(252, 56)
+$btnDebloatSelectCategory.Size = New-Object System.Drawing.Size(142, 29)
+$btnDebloatSelectCategory.Text = "全选当前分类"
+$btnDebloatSelectCategory.FlatStyle = "Flat"
+[void]$tabDebloat.Controls.Add($btnDebloatSelectCategory)
+
+$btnDebloatSelectAll = New-Object System.Windows.Forms.Button
+$btnDebloatSelectAll.Location = New-Object System.Drawing.Point(402, 56)
+$btnDebloatSelectAll.Size = New-Object System.Drawing.Size(132, 29)
+$btnDebloatSelectAll.Text = "全选全部"
+$btnDebloatSelectAll.FlatStyle = "Flat"
+[void]$tabDebloat.Controls.Add($btnDebloatSelectAll)
+
+$btnDebloatClear = New-Object System.Windows.Forms.Button
+$btnDebloatClear.Location = New-Object System.Drawing.Point(542, 56)
+$btnDebloatClear.Size = New-Object System.Drawing.Size(154, 29)
+$btnDebloatClear.Text = "清空全部"
+$btnDebloatClear.FlatStyle = "Flat"
+[void]$tabDebloat.Controls.Add($btnDebloatClear)
+
+$clbDebloat = New-Object System.Windows.Forms.CheckedListBox
+$clbDebloat.Location = New-Object System.Drawing.Point(10, 92)
+$clbDebloat.Size = New-Object System.Drawing.Size(686, 300)
+$clbDebloat.CheckOnClick = $true
+$clbDebloat.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+[void]$tabDebloat.Controls.Add($clbDebloat)
+
+$script:VisibleDebloatOptionIndices = @()
+$refreshDebloatOptions = {
+    $clbDebloat.Items.Clear()
+    $script:VisibleDebloatOptionIndices = @()
+    $category = [string]$cmbDebloatCategory.SelectedItem
+    for ($optionIndex = 0; $optionIndex -lt $script:DebloatOptions.Count; $optionIndex++) {
+        $option = $script:DebloatOptions[$optionIndex]
+        if ($category -eq "全部" -or $option.Category -eq $category) {
+            $script:VisibleDebloatOptionIndices += $optionIndex
+            [void]$clbDebloat.Items.Add("[$($option.Category)] $($option.Label)", [bool]$option.Selected)
+        }
+    }
+}
+
+$clbDebloat.Add_ItemCheck({
+    param($sender, $e)
+    if ($e.Index -lt $script:VisibleDebloatOptionIndices.Count) {
+        $optionIndex = $script:VisibleDebloatOptionIndices[$e.Index]
+        $script:DebloatOptions[$optionIndex].Selected = ($e.NewValue -eq [System.Windows.Forms.CheckState]::Checked)
+    }
+})
+$cmbDebloatCategory.Add_SelectedIndexChanged({ & $refreshDebloatOptions })
+& $refreshDebloatOptions
+
+$lblDebloatProgress = New-Object System.Windows.Forms.Label
+$lblDebloatProgress.Location = New-Object System.Drawing.Point(10, 397)
+$lblDebloatProgress.Size = New-Object System.Drawing.Size(686, 18)
+$lblDebloatProgress.Text = "等待执行；卸载应用时会显示当前应用与总体进度。"
+[void]$tabDebloat.Controls.Add($lblDebloatProgress)
+
+$progressDebloat = New-Object System.Windows.Forms.ProgressBar
+$progressDebloat.Location = New-Object System.Drawing.Point(10, 416)
+$progressDebloat.Size = New-Object System.Drawing.Size(686, 16)
+$progressDebloat.Minimum = 0
+$progressDebloat.Maximum = 100
+$progressDebloat.Value = 0
+[void]$tabDebloat.Controls.Add($progressDebloat)
+
+$btnDebloatApply = New-Object System.Windows.Forms.Button
+$btnDebloatApply.Location = New-Object System.Drawing.Point(10, 443)
+$btnDebloatApply.Size = New-Object System.Drawing.Size(225, 38)
+$btnDebloatApply.Text = "▶ 执行勾选项目"
+$btnDebloatApply.BackColor = [System.Drawing.Color]::FromArgb(41, 128, 185)
+$btnDebloatApply.ForeColor = [System.Drawing.Color]::White
+$btnDebloatApply.FlatStyle = "Flat"
+$btnDebloatApply.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9, [System.Drawing.FontStyle]::Bold)
+[void]$tabDebloat.Controls.Add($btnDebloatApply)
+
+$btnDebloatRecommended = New-Object System.Windows.Forms.Button
+$btnDebloatRecommended.Location = New-Object System.Drawing.Point(245, 443)
+$btnDebloatRecommended.Size = New-Object System.Drawing.Size(225, 38)
+$btnDebloatRecommended.Text = "✨ 执行轻量推荐方案"
+$btnDebloatRecommended.FlatStyle = "Flat"
+[void]$tabDebloat.Controls.Add($btnDebloatRecommended)
+
+$btnDebloatAppList = New-Object System.Windows.Forms.Button
+$btnDebloatAppList.Location = New-Object System.Drawing.Point(480, 443)
+$btnDebloatAppList.Size = New-Object System.Drawing.Size(216, 38)
+$btnDebloatAppList.Text = "📋 查看默认卸载清单"
+$btnDebloatAppList.FlatStyle = "Flat"
+[void]$tabDebloat.Controls.Add($btnDebloatAppList)
+
+$btnDebloatApply.Add_Click({
+    $selectedOptions = @($script:DebloatOptions | Where-Object Selected)
+    if ($selectedOptions.Count -eq 0) {
+        Write-Log "[系统精简] 请至少勾选一个项目。" "#e67e22"
+        return
+    }
+    $confirm = [System.Windows.Forms.MessageBox]::Show(
+        "即将修改系统设置。若勾选了应用卸载，相关预装应用会从当前系统移除。`n`n是否继续？",
+        "确认执行系统精简",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $arguments = @()
+    foreach ($option in $selectedOptions) {
+        if ($option.Argument) { $arguments += $option.Argument }
+        if ($option.Arguments) { $arguments += $option.Arguments }
+    }
+    Start-Win11Debloat -Arguments $arguments
+})
+
+$btnDebloatRecommended.Add_Click({
+    $confirm = [System.Windows.Forms.MessageBox]::Show(
+        "轻量推荐方案会关闭常见遥测与推广内容，并应用安全的界面清理设置。`n`n是否继续？",
+        "确认执行轻量推荐方案",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+    if ($confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
+        Start-Win11Debloat -Arguments @("-RunDefaultsLite")
+    }
+})
+
+$btnDebloatAppList.Add_Click({
+    try {
+        $catalog = @(Get-Win11DebloatAppCatalog)
+        $defaultApps = @($catalog | Where-Object SelectedByDefault)
+
+        $listForm = New-Object System.Windows.Forms.Form
+        $listForm.Text = "Win11Debloat 默认应用卸载清单（$($defaultApps.Count) 项）"
+        $listForm.Size = New-Object System.Drawing.Size(820, 620)
+        $listForm.StartPosition = "CenterParent"
+        $listForm.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+        $listForm.MinimizeBox = $false
+
+        $listInfo = New-Object System.Windows.Forms.Label
+        $listInfo.Dock = "Top"
+        $listInfo.Height = 52
+        $listInfo.Padding = New-Object System.Windows.Forms.Padding(8)
+        $listInfo.Text = "以下是上游默认清理候选项。只会尝试卸载本机实际存在的应用；Microsoft Store、照片、计算器、记事本、终端等关键/常用应用默认保留。"
+        [void]$listForm.Controls.Add($listInfo)
+
+        $appGrid = New-Object System.Windows.Forms.DataGridView
+        $appGrid.Dock = "Fill"
+        $appGrid.ReadOnly = $true
+        $appGrid.AllowUserToAddRows = $false
+        $appGrid.RowHeadersVisible = $false
+        $appGrid.SelectionMode = "FullRowSelect"
+        $appGrid.AutoSizeColumnsMode = "Fill"
+        $appGrid.BackgroundColor = [System.Drawing.Color]::White
+        $table = New-Object System.Data.DataTable
+        [void]$table.Columns.Add("应用名称")
+        [void]$table.Columns.Add("应用标识")
+        [void]$table.Columns.Add("卸载方式")
+        foreach ($app in $defaultApps) {
+            [void]$table.Rows.Add($app.FriendlyName, (@($app.AppId) -join ", "), $app.RemovalMethod)
+        }
+        $appGrid.DataSource = $table
+        $appGrid.Columns[0].FillWeight = 28
+        $appGrid.Columns[1].FillWeight = 55
+        $appGrid.Columns[2].FillWeight = 17
+        [void]$listForm.Controls.Add($appGrid)
+        $listInfo.BringToFront()
+
+        [void]$listForm.ShowDialog($form)
+        $listForm.Dispose()
+    } catch {
+        Write-Log "[应用清单❌] 无法读取卸载清单：$($_.Exception.Message)" "#e74c3c"
+    }
+})
+
+$btnDebloatSelectCategory.Add_Click({
+    foreach ($optionIndex in $script:VisibleDebloatOptionIndices) { $script:DebloatOptions[$optionIndex].Selected = $true }
+    & $refreshDebloatOptions
+})
+
+$btnDebloatSelectAll.Add_Click({
+    foreach ($option in $script:DebloatOptions) { $option.Selected = $true }
+    & $refreshDebloatOptions
+})
+
+$btnDebloatClear.Add_Click({
+    foreach ($option in $script:DebloatOptions) { $option.Selected = $false }
+    & $refreshDebloatOptions
+})
+
+$script:Win11DebloatTimer = New-Object System.Windows.Forms.Timer
+$script:Win11DebloatTimer.Interval = 1000
+$script:Win11DebloatTimer.Add_Tick({
+    if ($script:Win11DebloatLogFile -and (Test-Path -LiteralPath $script:Win11DebloatLogFile)) {
+        $logLines = @(Get-Content -Encoding UTF8 -LiteralPath $script:Win11DebloatLogFile -ErrorAction SilentlyContinue)
+        if ($logLines.Count -gt $script:Win11DebloatLogLineCount) {
+            $newLines = @($logLines | Select-Object -Skip $script:Win11DebloatLogLineCount)
+            $script:Win11DebloatLogLineCount = $logLines.Count
+            foreach ($logLine in $newLines) {
+                if ($logLine -match '^Removing\s+(.+)$') {
+                    $appId = $matches[1].Trim()
+                    $script:Win11DebloatRemovalCurrent++
+                    $friendlyName = if ($script:Win11DebloatAppNames.ContainsKey($appId)) { $script:Win11DebloatAppNames[$appId] } else { $appId }
+                    if ($script:Win11DebloatRemovalTotal -gt 0) {
+                        $progressDebloat.Value = [Math]::Min($script:Win11DebloatRemovalCurrent, $progressDebloat.Maximum)
+                        $lblDebloatProgress.Text = "卸载进度：$($script:Win11DebloatRemovalCurrent) / $($script:Win11DebloatRemovalTotal) — $friendlyName"
+                        Write-Log "[卸载进度] $($script:Win11DebloatRemovalCurrent)/$($script:Win11DebloatRemovalTotal) 正在处理：$friendlyName ($appId)" "#2980b9"
+                    }
+                } elseif ($logLine -match '^Unable to uninstall\s+(.+)$') {
+                    Write-Log "[应用卸载⚠] 未能卸载：$($matches[1])" "#e67e22"
+                }
+            }
+        }
+    }
+
+    if ($script:Win11DebloatProcess -and $script:Win11DebloatProcess.HasExited) {
+        $exitCode = $script:Win11DebloatProcess.ExitCode
+        $progressDebloat.Style = [System.Windows.Forms.ProgressBarStyle]::Continuous
+        $progressDebloat.Minimum = 0
+        $progressDebloat.Maximum = 100
+        $progressDebloat.Value = if ($exitCode -eq 0) { 100 } else { 0 }
+        if ($exitCode -eq 0) {
+            $lblDebloatProgress.Text = "执行完成。"
+            Write-Log "[系统精简✅] Win11Debloat 已执行完成。部分界面设置可能需要重启资源管理器或注销后生效。" "#27ae60"
+        } else {
+            $lblDebloatProgress.Text = "执行失败，退出代码：$exitCode"
+            Write-Log "[系统精简❌] Win11Debloat 执行失败，退出代码：$exitCode。" "#e74c3c"
+        }
+        $script:Win11DebloatProcess.Dispose()
+        $script:Win11DebloatProcess = $null
+        $script:Win11DebloatTimer.Stop()
+    }
+})
+
+# =========================================================================
 #                       下方共用日志与控制台区域
 # =========================================================================
 
@@ -748,4 +1167,6 @@ $bgDaemonTimer.Start()
 [void][System.Windows.Forms.Application]::Run($form)
 $bgDaemonTimer.Stop()
 $bgDaemonTimer.Dispose()
+$script:Win11DebloatTimer.Stop()
+$script:Win11DebloatTimer.Dispose()
 $notifyIcon.Dispose()

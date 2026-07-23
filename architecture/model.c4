@@ -1,0 +1,99 @@
+model {
+  adminUser = person '高级用户 / 管理员' {
+    description '通过图形界面选择进程、服务、计划任务和磁盘策略，并查看实时反馈。'
+  }
+
+  optimizer = system 'Windows Optimizer GUI' {
+    description '单文件 PowerShell WinForms 性能控制工具；启动时请求管理员权限。'
+    technology 'PowerShell 5+ / WinForms / .NET'
+    link ../WindowsOptimizerGUI.ps1 '主程序源码'
+
+    ui = component 'WinForms 主界面' {
+      description '承载进程监控、系统优化、日志面板以及窗口生命周期事件。'
+      technology 'System.Windows.Forms'
+    }
+
+    tray = component '系统托盘控制器' {
+      description '负责隐藏、恢复、立即巡检和彻底退出。'
+      technology 'NotifyIcon / ContextMenuStrip'
+    }
+
+    processMonitor = component '进程监控与绑核控制' {
+      description '读取高资源进程，设置 ProcessorAffinity 与 PriorityClass，并刷新表格状态。'
+      technology 'Get-Process / System.Diagnostics.Process'
+    }
+
+    watchdog = component '后台自动守护' {
+      description '每 3 秒检查已锁定进程，对新 PID 或被修改的配置重新应用亲和性和优先级。'
+      technology 'WinForms Timer'
+    }
+
+    optimization = component '系统优化控制器' {
+      description '读取、禁用或还原服务、计划任务及 NTFS 行为策略。'
+      technology 'PowerShell Cmdlets / fsutil'
+    }
+
+    logger = component '日志与状态反馈' {
+      description '将操作结果同时写入界面日志区和用户目录日志文件。'
+      technology 'RichTextBox / Add-Content'
+    }
+
+    lockState = store '进程锁定状态' {
+      description '以内存哈希表保存进程名、目标核心数和目标优先级。程序退出后清空。'
+      technology '$script:lockedProcesses'
+    }
+
+    optimizationCatalog = store '优化项清单' {
+      description '内置服务、计划任务和磁盘 IO 策略及其默认恢复值。'
+      technology '$script:optimizationItems'
+    }
+
+    logFile = store 'optimizer_log.txt' {
+      description '用户目录中的 UTF-8 操作日志。'
+      technology '文本文件'
+    }
+
+    ui -[realtime]-> processMonitor '选择进程、刷新或提交限制'
+    ui -[control]-> optimization '刷新、禁用或还原选中项'
+    ui -[realtime]-> logger '显示操作反馈'
+    tray -> ui '恢复窗口或触发关闭流程'
+    tray -[control]-> watchdog '手动立即巡检'
+    processMonitor -> lockState '保存 / 读取锁定配置'
+    watchdog -[read]-> lockState '每 3 秒读取目标配置'
+    watchdog -[control]-> processMonitor '重新应用绑核与优先级'
+    optimization -[read]-> optimizationCatalog '读取控制目标与默认值'
+    processMonitor -> logger '记录限制与追踪结果'
+    watchdog -> logger '记录自动纠正结果'
+    optimization -> logger '记录系统配置变更'
+    logger -> logFile '追加 UTF-8 日志'
+  }
+
+  processApi = external 'Windows 进程 API' {
+    description '提供进程枚举、工作集、CPU 时间、亲和性和优先级控制。'
+  }
+
+  serviceManager = external 'Windows 服务控制管理器' {
+    description '查询、启动、停止并修改服务启动类型。'
+  }
+
+  taskScheduler = external 'Windows 任务计划程序' {
+    description '查询、启用和禁用系统计划任务。'
+  }
+
+  ntfs = external 'NTFS 行为配置' {
+    description '通过 fsutil 查询和修改 8.3 文件名及最后访问时间戳策略。'
+  }
+
+  privilege = external 'UAC 管理员权限' {
+    description '程序在非管理员模式启动时，通过 RunAs 重新拉起自身。'
+  }
+
+  adminUser -[realtime]-> optimizer.ui '操作图形界面并查看状态'
+  adminUser -> optimizer.tray '最小化后继续控制后台守护'
+  optimizer.ui -> privilege '启动时检查并请求提权'
+  optimizer.processMonitor -[control]-> processApi '枚举、读取并修改进程'
+  optimizer.watchdog -[control]-> processApi '周期性校验并纠正进程配置'
+  optimizer.optimization -[control]-> serviceManager '查询 / 停止 / 启动 / 设置启动类型'
+  optimizer.optimization -[control]-> taskScheduler '查询 / 禁用 / 启用任务'
+  optimizer.optimization -[control]-> ntfs '查询 / 修改磁盘行为'
+}

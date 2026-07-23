@@ -1,0 +1,65 @@
+views {
+  view overview {
+    title '系统全景：Windows Optimizer GUI'
+    description '用户、应用内部组件、状态存储与 Windows 系统能力之间的关系。'
+    include *
+
+    style optimizer {
+      size large
+    }
+  }
+
+  view process-control of optimizer.processMonitor {
+    title '进程监控与绑核流程'
+    description '从用户选择目标进程，到修改 CPU 亲和性和优先级，再到日志反馈。'
+    include
+      adminUser,
+      optimizer.ui,
+      optimizer.processMonitor,
+      optimizer.lockState,
+      optimizer.logger,
+      optimizer.logFile,
+      processApi
+
+    style optimizer.processMonitor {
+      color green
+    }
+  }
+
+  view background-watchdog of optimizer.watchdog {
+    title '后台自动守护实时流程'
+    description 'WinForms Timer 每 3 秒触发一次；窗口最小化至托盘后仍持续运行。'
+    include
+      adminUser,
+      optimizer.tray,
+      optimizer.watchdog,
+      optimizer.lockState,
+      optimizer.processMonitor,
+      optimizer.logger,
+      optimizer.logFile,
+      processApi
+
+    style optimizer.watchdog {
+      color amber
+    }
+  }
+
+  view system-optimization of optimizer.optimization {
+    title '系统服务、计划任务与磁盘策略控制'
+    description '统一清单驱动三类 Windows 系统优化操作，并支持按默认值还原。'
+    include
+      adminUser,
+      optimizer.ui,
+      optimizer.optimization,
+      optimizer.optimizationCatalog,
+      optimizer.logger,
+      optimizer.logFile,
+      serviceManager,
+      taskScheduler,
+      ntfs
+
+    style optimizer.optimization {
+      color red
+    }
+  }
+}
