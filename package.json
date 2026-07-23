@@ -1,6 +1,6 @@
 {
   "name": "windows-optimizer-gui-architecture",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "Windows Optimizer GUI 的中文 LikeC4 实时架构图",
   "type": "module",

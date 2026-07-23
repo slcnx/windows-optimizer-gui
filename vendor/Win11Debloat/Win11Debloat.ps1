@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess)]
+﻿[CmdletBinding(SupportsShouldProcess)]
 param (
     [switch]$CLI,
     [switch]$Silent,
@@ -185,6 +185,10 @@ $script:RestoreBackupWindowSchema = Join-Path $schemasPath 'RestoreBackupWindow.
 $script:LoadAppsDetailsScriptPath = Join-Path (Join-Path $scriptsPath 'FileIO') 'LoadAppsDetailsFromJson.ps1'
 $script:TestAppInWingetListScriptPath = Join-Path (Join-Path $scriptsPath 'AppRemoval') 'Test-AppInWingetList.ps1'
 
+# Load the bundled Simplified Chinese presentation layer. Execution behavior remains upstream-compatible.
+. (Join-Path (Join-Path $scriptsPath 'GUI') 'Initialize-ChineseLocalization.ps1')
+Initialize-Win11DebloatChineseLocalization -SchemasPath $schemasPath -ConfigPath $configPath
+
 $script:ControlParams = 'WhatIf', 'Confirm', 'Verbose', 'Debug', 'LogPath', 'Silent', 'Sysprep', 'User', 'NoRestartExplorer', 'RunDefaults', 'RunDefaultsLite', 'RunSavedSettings', 'Config', 'CLI', 'AppRemovalTarget'
 
 # Script-level variables for GUI elements
@@ -263,7 +267,20 @@ if (-not ((Test-Path $script:DefaultSettingsFilePath) -and (Test-Path $script:Ap
 $script:Features = @{}
 try {
     $featuresData = Get-Content -Path $script:FeaturesFilePath -Raw | ConvertFrom-Json
+    foreach ($category in $featuresData.Categories) { $category.Name = ConvertTo-Win11DebloatChineseText $category.Name }
+    foreach ($group in $featuresData.UiGroups) {
+        $group.Label = ConvertTo-Win11DebloatChineseText $group.Label
+        $group.ToolTip = ConvertTo-Win11DebloatChineseText $group.ToolTip
+        $group.Category = ConvertTo-Win11DebloatChineseText $group.Category
+        foreach ($value in $group.Values) { $value.Label = ConvertTo-Win11DebloatChineseText $value.Label }
+    }
     foreach ($feature in $featuresData.Features) {
+        $feature.Label = ConvertTo-Win11DebloatChineseText $feature.Label
+        $feature.UndoLabel = ConvertTo-Win11DebloatChineseText $feature.UndoLabel
+        $feature.ApplyText = ConvertTo-Win11DebloatChineseText $feature.ApplyText
+        $feature.ApplyUndoText = ConvertTo-Win11DebloatChineseText $feature.ApplyUndoText
+        if ($feature.PSObject.Properties['ToolTip']) { $feature.ToolTip = ConvertTo-Win11DebloatChineseText $feature.ToolTip }
+        $feature.Category = ConvertTo-Win11DebloatChineseText $feature.Category
         if ([string]::IsNullOrWhiteSpace([string]$feature.FeatureId) -or [string]::IsNullOrWhiteSpace([string]$feature.Label) -or [string]::IsNullOrWhiteSpace([string]$feature.ApplyText)) {
             Write-Warning "Feature '$($feature.FeatureId)' is missing a FeatureId, Label, or ApplyText in Features.json and will be skipped."
             continue

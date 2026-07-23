@@ -31,12 +31,17 @@ if (-not (Get-Command Invoke-ps2exe -ErrorAction SilentlyContinue)) {
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("windows-optimizer-build-" + [guid]::NewGuid().ToString("N"))
 $zipFile = Join-Path $temporaryRoot "Win11Debloat.zip"
 $combinedScript = Join-Path $temporaryRoot "WindowsOptimizerGUI.embedded.ps1"
+$stagedVendorRoot = Join-Path $temporaryRoot "Win11Debloat"
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+    New-Item -ItemType Directory -Path $stagedVendorRoot | Out-Null
+    Get-ChildItem -LiteralPath $vendorRoot -Force |
+        Where-Object { $_.Name -notin @('Logs', 'Backups') } |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $stagedVendorRoot -Recurse -Force }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $vendorRoot,
+        $stagedVendorRoot,
         $zipFile,
         [System.IO.Compression.CompressionLevel]::Optimal,
         $false
@@ -65,7 +70,7 @@ try {
         -NoConsole -RequireAdmin -IconFile $iconFile `
         -Title "Windows Optimizer GUI" `
         -Description "离线内嵌 Win11Debloat 的 Windows 性能优化工具" `
-        -Version "3.1.0.0"
+        -Version "3.2.0.0"
 
     Write-Host "构建完成：$OutputFile" -ForegroundColor Green
 } finally {

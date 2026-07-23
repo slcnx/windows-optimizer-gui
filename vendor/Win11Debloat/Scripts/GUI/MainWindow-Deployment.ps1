@@ -1,4 +1,4 @@
-# MainWindow-Deployment.ps1
+﻿# MainWindow-Deployment.ps1
 # Overview generation, pending tweak actions, feature labels, tweak preset maps, apply logic, user mode state, user selection, and validation.
 
 function Get-UndoFeatureLabel {
@@ -377,7 +377,7 @@ function Initialize-TweakPresetSources {
 
     $script:DefaultTweakPresetMap = Build-TweakPresetControlMap -Window $Window -SettingsJson $DefaultSettingsJson
     $script:LastUsedTweakPresetMap = Build-TweakPresetControlMap -Window $Window -SettingsJson $LastUsedSettingsJson
-    $script:PrivacyTweakPresetMap = Build-CategoryTweakPresetMap -Window $Window -Category 'Privacy & Suggested Content'
+    $script:PrivacyTweakPresetMap = Build-CategoryTweakPresetMap -Window $Window -Category (ConvertTo-Win11DebloatChineseText 'Privacy & Suggested Content')
     $script:AITweakPresetMap = Build-CategoryTweakPresetMap -Window $Window -Category 'AI'
 
     $presetLastUsedTweaksBtn = $Window.FindName('PresetLastUsedTweaksBtn')
