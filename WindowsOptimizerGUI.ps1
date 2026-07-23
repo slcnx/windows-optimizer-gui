@@ -137,6 +137,17 @@ function Get-AppDescriptionCN {
     return "$usage。$risk"
 }
 
+function Get-AppRecommendationCN {
+    param($App)
+    $label = switch ([string]$App.Recommendation) {
+        "safe" { "推荐安全清理" }
+        "optional" { "可选应用" }
+        "unsafe" { "谨慎保留" }
+        default { "请确认" }
+    }
+    return $label
+}
+
 function Start-Win11Debloat {
     param([string[]]$Arguments)
 
@@ -1115,7 +1126,11 @@ $btnDebloatRecommended.Add_Click({
 
 $btnDebloatAppList.Add_Click({
     try {
-        $catalog = @(Get-Win11DebloatAppCatalog)
+        $debloatScript = Resolve-Win11DebloatScript
+        $appsJson = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path (Split-Path -Parent $debloatScript) "Config\Apps.json") | ConvertFrom-Json
+        $catalog = @($appsJson.Apps)
+        $gamingPresetIds = @((@($appsJson.Presets) | Where-Object Name -eq "Xbox gaming apps" | Select-Object -First 1).AppIds)
+        $oemPresetIds = @((@($appsJson.Presets) | Where-Object Name -eq "OEM software (Dell, HP, Lenovo, LG)" | Select-Object -First 1).AppIds)
         if ($script:SelectedDebloatAppIds.Count -eq 0) {
             $script:SelectedDebloatAppIds = @($catalog | Where-Object SelectedByDefault | ForEach-Object { @($_.AppId) })
         }
@@ -1135,6 +1150,36 @@ $btnDebloatAppList.Add_Click({
         $listInfo.Padding = New-Object System.Windows.Forms.Padding(8)
         $listInfo.Text = "逐项选择需要卸载的应用。蓝色默认清理项已预选；标记为「谨慎保留」的系统/常用组件默认不选。实际执行时只处理本机存在的应用。"
         [void]$listForm.Controls.Add($listInfo)
+
+        $appFilterPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+        $appFilterPanel.Dock = "Top"
+        $appFilterPanel.Height = 42
+        $appFilterPanel.Padding = New-Object System.Windows.Forms.Padding(6, 5, 6, 3)
+        $appFilterPanel.WrapContents = $false
+        [void]$listForm.Controls.Add($appFilterPanel)
+
+        $lblAppCategory = New-Object System.Windows.Forms.Label
+        $lblAppCategory.Size = New-Object System.Drawing.Size(68, 28)
+        $lblAppCategory.Text = "上游筛选:"
+        $lblAppCategory.TextAlign = "MiddleLeft"
+        [void]$appFilterPanel.Controls.Add($lblAppCategory)
+
+        $cmbAppCategory = New-Object System.Windows.Forms.ComboBox
+        $cmbAppCategory.Size = New-Object System.Drawing.Size(150, 28)
+        $cmbAppCategory.DropDownStyle = "DropDownList"
+        [void]$cmbAppCategory.Items.AddRange(@("全部", "上游默认清理", "推荐安全清理", "可选应用", "谨慎保留", "Xbox 游戏预设", "OEM 软件预设"))
+        $cmbAppCategory.SelectedIndex = 0
+        [void]$appFilterPanel.Controls.Add($cmbAppCategory)
+
+        $btnAppSelectNonSystem = New-Object System.Windows.Forms.Button
+        $btnAppSelectNonSystem.Size = New-Object System.Drawing.Size(205, 29)
+        $btnAppSelectNonSystem.Text = "选择除谨慎保留外全部应用"
+        [void]$appFilterPanel.Controls.Add($btnAppSelectNonSystem)
+
+        $btnAppSelectCategory = New-Object System.Windows.Forms.Button
+        $btnAppSelectCategory.Size = New-Object System.Drawing.Size(145, 29)
+        $btnAppSelectCategory.Text = "全选当前分类"
+        [void]$appFilterPanel.Controls.Add($btnAppSelectCategory)
 
         $listButtons = New-Object System.Windows.Forms.FlowLayoutPanel
         $listButtons.Dock = "Bottom"
@@ -1175,50 +1220,77 @@ $btnDebloatAppList.Add_Click({
         $appGrid.BackgroundColor = [System.Drawing.Color]::White
         $table = New-Object System.Data.DataTable
         [void]$table.Columns.Add("选择", [bool])
+        [void]$table.Columns.Add("上游建议")
         [void]$table.Columns.Add("应用名称")
         [void]$table.Columns.Add("中文说明")
         [void]$table.Columns.Add("应用标识")
-        [void]$table.Columns.Add("风险建议")
         [void]$table.Columns.Add("卸载方式")
+        [void]$table.Columns.Add("默认选择", [bool])
+        [void]$table.Columns.Add("推荐级别")
+        [void]$table.Columns.Add("Xbox预设", [bool])
+        [void]$table.Columns.Add("OEM预设", [bool])
         foreach ($app in $catalog) {
             $appIds = @($app.AppId)
             $isSelected = @($appIds | Where-Object { $selectedSet.Contains([string]$_) }).Count -gt 0
-            $riskLabel = switch ([string]$app.Recommendation) {
-                "safe" { "默认清理" }
-                "optional" { "按需选择" }
-                "unsafe" { "谨慎保留" }
-                default { "请确认" }
-            }
+            $isGamingPreset = @($appIds | Where-Object { $gamingPresetIds -contains $_ }).Count -gt 0
+            $isOemPreset = @($appIds | Where-Object { $oemPresetIds -contains $_ }).Count -gt 0
             [void]$table.Rows.Add(
                 $isSelected,
+                (Get-AppRecommendationCN $app),
                 $app.FriendlyName,
                 (Get-AppDescriptionCN $app),
                 ($appIds -join ", "),
-                $riskLabel,
-                $app.RemovalMethod
+                $app.RemovalMethod,
+                [bool]$app.SelectedByDefault,
+                [string]$app.Recommendation,
+                $isGamingPreset,
+                $isOemPreset
             )
         }
         $appGrid.DataSource = $table
-        foreach ($column in $appGrid.Columns) { $column.ReadOnly = ($column.Name -ne "选择") }
+        $appGrid.Add_DataBindingComplete({
+            foreach ($column in $appGrid.Columns) { $column.ReadOnly = ($column.Name -ne "选择") }
+            foreach ($metadataColumn in @("默认选择", "推荐级别", "Xbox预设", "OEM预设")) {
+                if ($appGrid.Columns[$metadataColumn]) { $appGrid.Columns[$metadataColumn].Visible = $false }
+            }
+        })
         [void]$listForm.Controls.Add($appGrid)
         $listInfo.BringToFront()
 
         $btnAppClear.Add_Click({
-            foreach ($row in $appGrid.Rows) { $row.Cells["选择"].Value = $false }
+            foreach ($row in $table.Rows) { $row["选择"] = $false }
         })
         $btnAppDefaults.Add_Click({
-            for ($rowIndex = 0; $rowIndex -lt $appGrid.Rows.Count; $rowIndex++) {
-                $appGrid.Rows[$rowIndex].Cells["选择"].Value = [bool]$catalog[$rowIndex].SelectedByDefault
+            for ($rowIndex = 0; $rowIndex -lt $table.Rows.Count; $rowIndex++) {
+                $table.Rows[$rowIndex]["选择"] = [bool]$catalog[$rowIndex].SelectedByDefault
             }
+        })
+        $cmbAppCategory.Add_SelectedIndexChanged({
+            $selectedCategory = [string]$cmbAppCategory.SelectedItem
+            $table.DefaultView.RowFilter = switch ($selectedCategory) {
+                "上游默认清理" { "[默认选择] = true" }
+                "推荐安全清理" { "[推荐级别] = 'safe'" }
+                "可选应用" { "[推荐级别] = 'optional'" }
+                "谨慎保留" { "[推荐级别] = 'unsafe'" }
+                "Xbox 游戏预设" { "[Xbox预设] = true" }
+                "OEM 软件预设" { "[OEM预设] = true" }
+                default { "" }
+            }
+        })
+        $btnAppSelectNonSystem.Add_Click({
+            foreach ($row in $table.Rows) { $row["选择"] = ([string]$row["推荐级别"] -ne "unsafe") }
+        })
+        $btnAppSelectCategory.Add_Click({
+            foreach ($viewRow in $table.DefaultView) { $viewRow["选择"] = $true }
         })
 
         $dialogResult = $listForm.ShowDialog($form)
         if ($dialogResult -eq [System.Windows.Forms.DialogResult]::OK) {
             $appGrid.EndEdit()
             $chosenIds = New-Object System.Collections.Generic.HashSet[string]
-            foreach ($row in $appGrid.Rows) {
-                if ([bool]$row.Cells["选择"].Value) {
-                    foreach ($appId in ([string]$row.Cells["应用标识"].Value -split ',')) {
+            foreach ($row in $table.Rows) {
+                if ([bool]$row["选择"]) {
+                    foreach ($appId in ([string]$row["应用标识"] -split ',')) {
                         if (-not [string]::IsNullOrWhiteSpace($appId)) { [void]$chosenIds.Add($appId.Trim()) }
                     }
                 }

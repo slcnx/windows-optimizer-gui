@@ -65,7 +65,7 @@ try {
         -NoConsole -RequireAdmin -IconFile $iconFile `
         -Title "Windows Optimizer GUI" `
         -Description "离线内嵌 Win11Debloat 的 Windows 性能优化工具" `
-        -Version "3.0.0.0"
+        -Version "3.1.0.0"
 
     Write-Host "构建完成：$OutputFile" -ForegroundColor Green
 } finally {
