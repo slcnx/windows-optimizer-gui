@@ -1,6 +1,23 @@
 ﻿Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace WindowsOptimizerGUI {
+    public struct ScrollPoint {
+        public int X;
+        public int Y;
+    }
+
+    public static class RichTextScroll {
+        [DllImport("user32.dll")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, uint message, IntPtr wParam, ref ScrollPoint lParam);
+    }
+}
+'@
+
 # 隐藏控制台黑框
 Add-Type -Name Window -Namespace Console -MemberDefinition '
 [DllImport("Kernel32.dll")] public static extern IntPtr GetConsoleWindow();
@@ -93,7 +110,11 @@ function Start-Win11Debloat {
         $script:Win11DebloatRemovalTotal = 0
         $script:Win11DebloatAppNames = @{}
 
-        if (($Arguments -contains "-RemoveApps") -or ($Arguments -contains "-RemoveGamingApps")) {
+        if (($Arguments -contains "-RemoveApps") -or
+            ($Arguments -contains "-RemoveGamingApps") -or
+            ($Arguments -contains "-DisableBing") -or
+            ($Arguments -contains "-DisableCopilot") -or
+            ($Arguments -contains "-DisableWidgets")) {
             $catalog = @(Get-Win11DebloatAppCatalog)
             $selectedAppIds = New-Object System.Collections.Generic.HashSet[string]
             foreach ($app in $catalog) {
@@ -107,6 +128,21 @@ function Start-Win11Debloat {
                 $appsJson = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $debloatRoot "Config\Apps.json") | ConvertFrom-Json
                 $gamingPreset = $appsJson.Presets | Where-Object Name -eq "Xbox gaming apps" | Select-Object -First 1
                 foreach ($appId in @($gamingPreset.AppIds)) { [void]$selectedAppIds.Add([string]$appId) }
+            }
+            if ($Arguments -contains "-DisableBing") {
+                [void]$selectedAppIds.Add("Microsoft.BingSearch")
+                $script:Win11DebloatAppNames["Microsoft.BingSearch"] = "Bing Search"
+            }
+            if ($Arguments -contains "-DisableCopilot") {
+                [void]$selectedAppIds.Add("Microsoft.Copilot")
+                [void]$selectedAppIds.Add("XP9CXNGPPJ97XX")
+                $script:Win11DebloatAppNames["Microsoft.Copilot"] = "Microsoft Copilot"
+                $script:Win11DebloatAppNames["XP9CXNGPPJ97XX"] = "Microsoft Copilot"
+            }
+            if ($Arguments -contains "-DisableWidgets") {
+                foreach ($appId in @("Microsoft.StartExperiencesApp", "MicrosoftWindows.Client.WebExperience", "Microsoft.WidgetsPlatformRuntime")) {
+                    [void]$selectedAppIds.Add($appId)
+                }
             }
             $script:Win11DebloatRemovalTotal = $selectedAppIds.Count
         }
@@ -148,11 +184,22 @@ function Write-Log {
     Add-Content -Path $logFile -Value $line -Encoding UTF8
     if ($txtLog -and $txtLog.IsHandleCreated) {
         $txtLog.Invoke([Action]{
+            $scrollPosition = New-Object WindowsOptimizerGUI.ScrollPoint
+            [void][WindowsOptimizerGUI.RichTextScroll]::SendMessage($txtLog.Handle, 0x04DD, [IntPtr]::Zero, [ref]$scrollPosition)
+            $lastVisibleCharacter = $txtLog.GetCharIndexFromPosition(
+                (New-Object System.Drawing.Point($txtLog.ClientSize.Width - 2, $txtLog.ClientSize.Height - 2))
+            )
+            $wasAtBottom = ($txtLog.TextLength -eq 0) -or ($lastVisibleCharacter -ge ($txtLog.TextLength - 2))
+
             $txtLog.SelectionStart = $txtLog.TextLength
             $txtLog.SelectionLength = 0
             $txtLog.SelectionColor = [System.Drawing.ColorTranslator]::FromHtml($color)
             $txtLog.AppendText("$line`r`n")
-            $txtLog.ScrollToCaret()
+            if ($wasAtBottom) {
+                $txtLog.ScrollToCaret()
+            } else {
+                [void][WindowsOptimizerGUI.RichTextScroll]::SendMessage($txtLog.Handle, 0x04DE, [IntPtr]::Zero, [ref]$scrollPosition)
+            }
         })
     }
 }
@@ -1042,9 +1089,6 @@ $btnDebloatAppList.Add_Click({
             [void]$table.Rows.Add($app.FriendlyName, (@($app.AppId) -join ", "), $app.RemovalMethod)
         }
         $appGrid.DataSource = $table
-        $appGrid.Columns[0].FillWeight = 28
-        $appGrid.Columns[1].FillWeight = 55
-        $appGrid.Columns[2].FillWeight = 17
         [void]$listForm.Controls.Add($appGrid)
         $listInfo.BringToFront()
 
@@ -1090,6 +1134,24 @@ $script:Win11DebloatTimer.Add_Tick({
                     }
                 } elseif ($logLine -match '^Unable to uninstall\s+(.+)$') {
                     Write-Log "[应用卸载⚠] 未能卸载：$($matches[1])" "#e67e22"
+                } elseif ($logLine -match '^>\s+(.+?)(?:\.\.\.)?$') {
+                    $featureMessage = $matches[1].Trim()
+                    $featureMessage = $featureMessage `
+                        -replace '^Disabling\s+', '正在禁用：' `
+                        -replace '^Enabling\s+', '正在启用：' `
+                        -replace '^Hiding\s+', '正在隐藏：' `
+                        -replace '^Showing\s+', '正在显示：' `
+                        -replace '^Setting\s+', '正在设置：' `
+                        -replace '^Restoring\s+', '正在恢复：' `
+                        -replace '^Creating\s+', '正在创建：' `
+                        -replace '^Applying\s+', '正在应用：' `
+                        -replace '^Clearing\s+', '正在清理：' `
+                        -replace '^Preventing\s+', '正在阻止：' `
+                        -replace '^Removing\s+', '正在移除：'
+                    $lblDebloatProgress.Text = $featureMessage
+                    Write-Log "[功能进度] $featureMessage" "#8e44ad"
+                } elseif ($logLine -match '^(Disabled|Enabled|Successfully|Failed|Imported|Applied|Removed)\b') {
+                    Write-Log "[功能结果] $logLine" "#7f8c8d"
                 }
             }
         }
