@@ -44,6 +44,7 @@ $script:Win11DebloatLogLineCount = 0
 $script:Win11DebloatRemovalCurrent = 0
 $script:Win11DebloatRemovalTotal = 0
 $script:Win11DebloatAppNames = @{}
+$script:SelectedDebloatAppIds = @()
 
 function Resolve-Win11DebloatScript {
     if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
@@ -91,6 +92,51 @@ function Get-Win11DebloatAppCatalog {
     return @((Get-Content -Raw -Encoding UTF8 -LiteralPath $appsFile | ConvertFrom-Json).Apps)
 }
 
+function Get-AppDescriptionCN {
+    param($App)
+
+    $english = [string]$App.Description
+    $usage = switch -Regex ($english) {
+        'video editor|video editing' { "视频剪辑与编辑应用"; break }
+        'photo editing|photo viewing|photo collage' { "图片查看、编辑或创作应用"; break }
+        'news|Finance news|Sports news' { "新闻资讯与内容聚合应用"; break }
+        'weather forecast' { "天气预报应用"; break }
+        'translation service' { "语言翻译应用"; break }
+        'AI assistant|AI-enhanced|AI Hub' { "人工智能助手或 AI 功能组件"; break }
+        'system cleanup|system optimization' { "系统清理与优化工具"; break }
+        'tips|introductory guide|tutorial' { "系统使用提示与入门引导应用"; break }
+        'note-taking|sticky notes|Digital note' { "笔记与信息记录应用"; break }
+        'Office|Microsoft 365' { "Microsoft 365 / Office 相关应用"; break }
+        'game|Gaming|Xbox|puzzle|strategy|casino|Farming|Racing' { "游戏或 Xbox 娱乐组件"; break }
+        'streaming|Live TV|music streaming|Media player|plays local audio' { "音视频播放或流媒体应用"; break }
+        'social media|social network|professional networking' { "社交网络应用"; break }
+        'remote assistance|Remote Desktop' { "远程连接与协助工具"; break }
+        'mail|Calendar' { "邮件或日历应用"; break }
+        'drawing|sketching|paint' { "绘图与创作应用"; break }
+        'PDF' { "PDF 阅读或批注应用"; break }
+        'language learning' { "语言学习应用"; break }
+        'shopping' { "购物服务应用"; break }
+        'compression|extraction' { "文件压缩与解压工具"; break }
+        'OEM|HP|Lenovo|Dell|LG' { "设备厂商预装的管理、支持或推广软件"; break }
+        'Widgets' { "Windows 小组件相关运行组件"; break }
+        'browser' { "网页浏览器应用"; break }
+        'Calculator' { "系统计算器应用"; break }
+        'Camera' { "相机与摄像头应用"; break }
+        'Notepad|text editor' { "文本编辑应用"; break }
+        'Store' { "Microsoft Store 应用商店组件"; break }
+        'terminal' { "Windows 命令行终端组件"; break }
+        default { "$($App.FriendlyName) 对应的 Windows 应用或组件" }
+    }
+
+    $risk = switch ([string]$App.Recommendation) {
+        "safe" { "通常属于非必要预装、已停用产品或推广内容，可按需清理。" }
+        "optional" { "可能仍有使用价值，建议确认自己不需要后再卸载。" }
+        "unsafe" { "系统或其他应用可能依赖它，卸载后可能不易恢复，建议保留。" }
+        default { "请根据实际用途决定是否卸载。" }
+    }
+    return "$usage。$risk"
+}
+
 function Start-Win11Debloat {
     param([string[]]$Arguments)
 
@@ -119,9 +165,12 @@ function Start-Win11Debloat {
             $selectedAppIds = New-Object System.Collections.Generic.HashSet[string]
             foreach ($app in $catalog) {
                 foreach ($appId in @($app.AppId)) { $script:Win11DebloatAppNames[[string]$appId] = [string]$app.FriendlyName }
-                if (($Arguments -contains "-RemoveApps") -and $app.SelectedByDefault) {
-                    foreach ($appId in @($app.AppId)) { [void]$selectedAppIds.Add([string]$appId) }
+            }
+            if ($Arguments -contains "-RemoveApps") {
+                if ($script:SelectedDebloatAppIds.Count -eq 0) {
+                    $script:SelectedDebloatAppIds = @($catalog | Where-Object SelectedByDefault | ForEach-Object { @($_.AppId) })
                 }
+                foreach ($appId in $script:SelectedDebloatAppIds) { [void]$selectedAppIds.Add([string]$appId) }
             }
             if ($Arguments -contains "-RemoveGamingApps") {
                 $debloatRoot = Split-Path -Parent $debloatScript
@@ -155,6 +204,9 @@ function Start-Win11Debloat {
             "-NoRestartExplorer",
             "-LogPath", ('"{0}"' -f $runLogDirectory)
         ) + $Arguments
+        if (($Arguments -contains "-RemoveApps") -and $script:SelectedDebloatAppIds.Count -gt 0) {
+            $argumentList += @("-Apps", ('"{0}"' -f ($script:SelectedDebloatAppIds -join ",")))
+        }
 
         $script:Win11DebloatProcess = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
             -ArgumentList $argumentList -WindowStyle Hidden -PassThru
@@ -187,7 +239,10 @@ function Write-Log {
             $scrollPosition = New-Object WindowsOptimizerGUI.ScrollPoint
             [void][WindowsOptimizerGUI.RichTextScroll]::SendMessage($txtLog.Handle, 0x04DD, [IntPtr]::Zero, [ref]$scrollPosition)
             $lastVisibleCharacter = $txtLog.GetCharIndexFromPosition(
-                (New-Object System.Drawing.Point($txtLog.ClientSize.Width - 2, $txtLog.ClientSize.Height - 2))
+                (New-Object System.Drawing.Point -ArgumentList @(
+                    [int]($txtLog.ClientSize.Width - 2),
+                    [int]($txtLog.ClientSize.Height - 2)
+                ))
             )
             $wasAtBottom = ($txtLog.TextLength -eq 0) -or ($lastVisibleCharacter -ge ($txtLog.TextLength - 2))
 
@@ -883,7 +938,7 @@ $lblDebloatTitle.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9, 
 [void]$tabDebloat.Controls.Add($lblDebloatTitle)
 
 $script:DebloatOptions = @(
-    [pscustomobject]@{ Category = "应用清理"; Label = "卸载微软预装与推广应用（保留商店等关键组件）"; Argument = "-RemoveApps"; Selected = $false },
+    [pscustomobject]@{ Category = "应用清理"; Label = "卸载自选的预装与推广应用（点击下方按钮选择）"; Argument = "-RemoveApps"; Selected = $false },
     [pscustomobject]@{ Category = "应用清理"; Label = "卸载 Xbox 游戏类预装应用"; Argument = "-RemoveGamingApps"; Selected = $false },
     [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭遥测、诊断数据、活动历史与广告跟踪"; Argument = "-DisableTelemetry"; Selected = $false },
     [pscustomobject]@{ Category = "隐私与推广"; Label = "关闭 Windows 搜索历史"; Argument = "-DisableSearchHistory"; Selected = $false },
@@ -1016,7 +1071,7 @@ $btnDebloatRecommended.FlatStyle = "Flat"
 $btnDebloatAppList = New-Object System.Windows.Forms.Button
 $btnDebloatAppList.Location = New-Object System.Drawing.Point(480, 443)
 $btnDebloatAppList.Size = New-Object System.Drawing.Size(216, 38)
-$btnDebloatAppList.Text = "📋 查看默认卸载清单"
+$btnDebloatAppList.Text = "📋 选择要卸载的应用"
 $btnDebloatAppList.FlatStyle = "Flat"
 [void]$tabDebloat.Controls.Add($btnDebloatAppList)
 
@@ -1024,6 +1079,10 @@ $btnDebloatApply.Add_Click({
     $selectedOptions = @($script:DebloatOptions | Where-Object Selected)
     if ($selectedOptions.Count -eq 0) {
         Write-Log "[系统精简] 请至少勾选一个项目。" "#e67e22"
+        return
+    }
+    if (($selectedOptions.Argument -contains "-RemoveApps") -and $script:SelectedDebloatAppIds.Count -eq 0) {
+        Write-Log "[系统精简] 已勾选应用卸载，但尚未选择应用。请先点击「选择要卸载的应用」。" "#e67e22"
         return
     }
     $confirm = [System.Windows.Forms.MessageBox]::Show(
@@ -1057,42 +1116,117 @@ $btnDebloatRecommended.Add_Click({
 $btnDebloatAppList.Add_Click({
     try {
         $catalog = @(Get-Win11DebloatAppCatalog)
-        $defaultApps = @($catalog | Where-Object SelectedByDefault)
+        if ($script:SelectedDebloatAppIds.Count -eq 0) {
+            $script:SelectedDebloatAppIds = @($catalog | Where-Object SelectedByDefault | ForEach-Object { @($_.AppId) })
+        }
+        $selectedSet = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($appId in $script:SelectedDebloatAppIds) { [void]$selectedSet.Add([string]$appId) }
 
         $listForm = New-Object System.Windows.Forms.Form
-        $listForm.Text = "Win11Debloat 默认应用卸载清单（$($defaultApps.Count) 项）"
-        $listForm.Size = New-Object System.Drawing.Size(820, 620)
+        $listForm.Text = "选择要卸载的 Windows 应用"
+        $listForm.Size = New-Object System.Drawing.Size(940, 680)
         $listForm.StartPosition = "CenterParent"
         $listForm.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
         $listForm.MinimizeBox = $false
 
         $listInfo = New-Object System.Windows.Forms.Label
         $listInfo.Dock = "Top"
-        $listInfo.Height = 52
+        $listInfo.Height = 48
         $listInfo.Padding = New-Object System.Windows.Forms.Padding(8)
-        $listInfo.Text = "以下是上游默认清理候选项。只会尝试卸载本机实际存在的应用；Microsoft Store、照片、计算器、记事本、终端等关键/常用应用默认保留。"
+        $listInfo.Text = "逐项选择需要卸载的应用。蓝色默认清理项已预选；标记为「谨慎保留」的系统/常用组件默认不选。实际执行时只处理本机存在的应用。"
         [void]$listForm.Controls.Add($listInfo)
+
+        $listButtons = New-Object System.Windows.Forms.FlowLayoutPanel
+        $listButtons.Dock = "Bottom"
+        $listButtons.Height = 48
+        $listButtons.FlowDirection = "RightToLeft"
+        $listButtons.Padding = New-Object System.Windows.Forms.Padding(6)
+        [void]$listForm.Controls.Add($listButtons)
+
+        $btnAppConfirm = New-Object System.Windows.Forms.Button
+        $btnAppConfirm.Size = New-Object System.Drawing.Size(120, 32)
+        $btnAppConfirm.Text = "确定选择"
+        $btnAppConfirm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        [void]$listButtons.Controls.Add($btnAppConfirm)
+
+        $btnAppCancel = New-Object System.Windows.Forms.Button
+        $btnAppCancel.Size = New-Object System.Drawing.Size(100, 32)
+        $btnAppCancel.Text = "取消"
+        $btnAppCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        [void]$listButtons.Controls.Add($btnAppCancel)
+
+        $btnAppClear = New-Object System.Windows.Forms.Button
+        $btnAppClear.Size = New-Object System.Drawing.Size(100, 32)
+        $btnAppClear.Text = "全部取消"
+        [void]$listButtons.Controls.Add($btnAppClear)
+
+        $btnAppDefaults = New-Object System.Windows.Forms.Button
+        $btnAppDefaults.Size = New-Object System.Drawing.Size(130, 32)
+        $btnAppDefaults.Text = "恢复默认选择"
+        [void]$listButtons.Controls.Add($btnAppDefaults)
 
         $appGrid = New-Object System.Windows.Forms.DataGridView
         $appGrid.Dock = "Fill"
-        $appGrid.ReadOnly = $true
+        $appGrid.ReadOnly = $false
         $appGrid.AllowUserToAddRows = $false
         $appGrid.RowHeadersVisible = $false
         $appGrid.SelectionMode = "FullRowSelect"
         $appGrid.AutoSizeColumnsMode = "Fill"
         $appGrid.BackgroundColor = [System.Drawing.Color]::White
         $table = New-Object System.Data.DataTable
+        [void]$table.Columns.Add("选择", [bool])
         [void]$table.Columns.Add("应用名称")
+        [void]$table.Columns.Add("中文说明")
         [void]$table.Columns.Add("应用标识")
+        [void]$table.Columns.Add("风险建议")
         [void]$table.Columns.Add("卸载方式")
-        foreach ($app in $defaultApps) {
-            [void]$table.Rows.Add($app.FriendlyName, (@($app.AppId) -join ", "), $app.RemovalMethod)
+        foreach ($app in $catalog) {
+            $appIds = @($app.AppId)
+            $isSelected = @($appIds | Where-Object { $selectedSet.Contains([string]$_) }).Count -gt 0
+            $riskLabel = switch ([string]$app.Recommendation) {
+                "safe" { "默认清理" }
+                "optional" { "按需选择" }
+                "unsafe" { "谨慎保留" }
+                default { "请确认" }
+            }
+            [void]$table.Rows.Add(
+                $isSelected,
+                $app.FriendlyName,
+                (Get-AppDescriptionCN $app),
+                ($appIds -join ", "),
+                $riskLabel,
+                $app.RemovalMethod
+            )
         }
         $appGrid.DataSource = $table
+        foreach ($column in $appGrid.Columns) { $column.ReadOnly = ($column.Name -ne "选择") }
         [void]$listForm.Controls.Add($appGrid)
         $listInfo.BringToFront()
 
-        [void]$listForm.ShowDialog($form)
+        $btnAppClear.Add_Click({
+            foreach ($row in $appGrid.Rows) { $row.Cells["选择"].Value = $false }
+        })
+        $btnAppDefaults.Add_Click({
+            for ($rowIndex = 0; $rowIndex -lt $appGrid.Rows.Count; $rowIndex++) {
+                $appGrid.Rows[$rowIndex].Cells["选择"].Value = [bool]$catalog[$rowIndex].SelectedByDefault
+            }
+        })
+
+        $dialogResult = $listForm.ShowDialog($form)
+        if ($dialogResult -eq [System.Windows.Forms.DialogResult]::OK) {
+            $appGrid.EndEdit()
+            $chosenIds = New-Object System.Collections.Generic.HashSet[string]
+            foreach ($row in $appGrid.Rows) {
+                if ([bool]$row.Cells["选择"].Value) {
+                    foreach ($appId in ([string]$row.Cells["应用标识"].Value -split ',')) {
+                        if (-not [string]::IsNullOrWhiteSpace($appId)) { [void]$chosenIds.Add($appId.Trim()) }
+                    }
+                }
+            }
+            $script:SelectedDebloatAppIds = @($chosenIds)
+            $btnDebloatAppList.Text = "📋 已选择 $($script:SelectedDebloatAppIds.Count) 个应用"
+            Write-Log "[应用选择] 已选择 $($script:SelectedDebloatAppIds.Count) 个应用卸载标识。" "#2980b9"
+        }
         $listForm.Dispose()
     } catch {
         Write-Log "[应用清单❌] 无法读取卸载清单：$($_.Exception.Message)" "#e74c3c"
